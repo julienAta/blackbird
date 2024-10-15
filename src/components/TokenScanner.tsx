@@ -10,14 +10,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import Image from "next/image";
-import { getTokenInfo } from "@/lib/solana";
+import { getTokenInfo, getTokenHolders } from "@/lib/solana";
 
 const TokenScanner = () => {
   const [tokenAddress, setTokenAddress] = useState(
     "JBSVUpKgYNHt4GLtNebQxTJmZgftTMWENQrziHtGpump"
   );
   const [tokenInfo, setTokenInfo] = useState(null);
+  const [tokenHolders, setTokenHolders] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingHolders, setIsLoadingHolders] = useState(false);
   const [error, setError] = useState("");
 
   const handleScan = async () => {
@@ -27,19 +29,42 @@ const TokenScanner = () => {
       const info = await getTokenInfo(tokenAddress);
       setTokenInfo(info);
     } catch (err) {
-      setError("Failed to scan token. Please check the address and try again.");
+      setError(`Failed to scan token: ${err.message}`);
       setTokenInfo(null);
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleFetchHolders = async () => {
+    setIsLoadingHolders(true);
+    setError("");
+    try {
+      const holders = await getTokenHolders(tokenAddress, 100); // Fetch up to 100 holders
+      setTokenHolders(holders);
+      if (holders.length === 0) {
+        setError(
+          "No token holders found. This could be due to API limitations or the token might not have any holders."
+        );
+      }
+    } catch (err) {
+      setError(`Failed to fetch token holders: ${err.message}`);
+    } finally {
+      setIsLoadingHolders(false);
+    }
+  };
+
+  const totalHoldersSupply = tokenHolders.reduce(
+    (sum, holder) => sum + holder.amount,
+    0
+  );
+
   return (
     <Card className="w-full max-w-4xl">
       <CardHeader>
         <CardTitle>Token Scanner</CardTitle>
         <CardDescription>
-          Enter a Solana token address to scan for token information
+          Enter a Solana token address to scan for token information and holders
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -95,8 +120,45 @@ const TokenScanner = () => {
                       ${tokenInfo.pricePerToken.toFixed(6)} USDC
                     </dd>
                   </div>
+                  <div>
+                    <dt className="inline font-semibold">Mint Authority:</dt>
+                    <dd className="inline ml-1">{tokenInfo.mintAuthority}</dd>
+                  </div>
+                  <div>
+                    <dt className="inline font-semibold">Freeze Authority:</dt>
+                    <dd className="inline ml-1">
+                      {tokenInfo.freezeAuthority || "None"}
+                    </dd>
+                  </div>
                 </dl>
               </div>
+              <Button
+                onClick={handleFetchHolders}
+                disabled={isLoadingHolders}
+                className="mt-4"
+              >
+                {isLoadingHolders
+                  ? "Fetching Holders..."
+                  : "Fetch Token Holders"}
+              </Button>
+              {tokenHolders.length > 0 && (
+                <div className="mt-4">
+                  <h3 className="font-semibold">Token Holders:</h3>
+                  <p>Displaying top {tokenHolders.length} holders</p>
+                  <p>
+                    Total supply held by displayed holders:{" "}
+                    {totalHoldersSupply.toLocaleString()} tokens
+                  </p>
+                  <ul className="mt-2 space-y-1 max-h-60 overflow-y-auto">
+                    {tokenHolders.map((holder, index) => (
+                      <li key={index}>
+                        <span className="font-medium">{holder.address}</span>:{" "}
+                        {holder.amount.toLocaleString()} tokens
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
