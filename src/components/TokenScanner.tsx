@@ -10,16 +10,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import Image from "next/image";
-import { getTokenInfo, getTokenHolders } from "@/lib/solana";
+import { getTokenInfo, getTokenAccounts } from "@/lib/solana";
 
 const TokenScanner = () => {
   const [tokenAddress, setTokenAddress] = useState(
-    "JBSVUpKgYNHt4GLtNebQxTJmZgftTMWENQrziHtGpump"
+    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" // Example Solana token address (BONK)
   );
   const [tokenInfo, setTokenInfo] = useState(null);
-  const [tokenHolders, setTokenHolders] = useState([]);
+  const [tokenAccounts, setTokenAccounts] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingHolders, setIsLoadingHolders] = useState(false);
+  const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
   const [error, setError] = useState("");
 
   const handleScan = async () => {
@@ -36,42 +36,41 @@ const TokenScanner = () => {
     }
   };
 
-  const handleFetchHolders = async () => {
-    setIsLoadingHolders(true);
+  const handleFetchAccounts = async () => {
+    setIsLoadingAccounts(true);
     setError("");
     try {
-      const holders = await getTokenHolders(tokenAddress, 100); // Fetch up to 100 holders
-      setTokenHolders(holders);
-      if (holders.length === 0) {
-        setError(
-          "No token holders found. This could be due to API limitations or the token might not have any holders."
-        );
+      const accounts = await getTokenAccounts(tokenAddress, 1000);
+      setTokenAccounts(accounts);
+      if (accounts.length === 0) {
+        setError("No token accounts found.");
       }
     } catch (err) {
-      setError(`Failed to fetch token holders: ${err.message}`);
+      setError(`Failed to fetch token accounts: ${err.message}`);
     } finally {
-      setIsLoadingHolders(false);
+      setIsLoadingAccounts(false);
     }
   };
 
-  const totalHoldersSupply = tokenHolders.reduce(
-    (sum, holder) => sum + holder.amount,
+  const totalSupply = tokenAccounts.reduce(
+    (sum, account) => sum + account.amount,
     0
   );
 
   return (
     <Card className="w-full max-w-4xl">
       <CardHeader>
-        <CardTitle>Token Scanner</CardTitle>
+        <CardTitle>Solana Token Scanner</CardTitle>
         <CardDescription>
-          Enter a Solana token address to scan for token information and holders
+          Enter a Solana token address to scan for token information and
+          accounts
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
           <Input
             type="text"
-            placeholder="Token Address"
+            placeholder="Solana Token Address"
             value={tokenAddress}
             onChange={(e) => setTokenAddress(e.target.value)}
           />
@@ -133,30 +132,39 @@ const TokenScanner = () => {
                 </dl>
               </div>
               <Button
-                onClick={handleFetchHolders}
-                disabled={isLoadingHolders}
+                onClick={handleFetchAccounts}
+                disabled={isLoadingAccounts}
                 className="mt-4"
               >
-                {isLoadingHolders
-                  ? "Fetching Holders..."
-                  : "Fetch Token Holders"}
+                {isLoadingAccounts
+                  ? "Fetching Accounts..."
+                  : "Fetch Token Accounts"}
               </Button>
-              {tokenHolders.length > 0 && (
+              {tokenAccounts.length > 0 && (
                 <div className="mt-4">
-                  <h3 className="font-semibold">Token Holders:</h3>
-                  <p>Displaying top {tokenHolders.length} holders</p>
-                  <p>
-                    Total supply held by displayed holders:{" "}
-                    {totalHoldersSupply.toLocaleString()} tokens
-                  </p>
-                  <ul className="mt-2 space-y-1 max-h-60 overflow-y-auto">
-                    {tokenHolders.map((holder, index) => (
-                      <li key={index}>
-                        <span className="font-medium">{holder.address}</span>:{" "}
-                        {holder.amount.toLocaleString()} tokens
-                      </li>
-                    ))}
-                  </ul>
+                  <h3 className="font-semibold">Token Accounts:</h3>
+                  <p>Displaying {tokenAccounts.length} accounts</p>
+                  <p>Total supply: {totalSupply.toLocaleString()} tokens</p>
+                  <div className="mt-2 max-h-60 overflow-y-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr>
+                          <th className="text-left">Owner</th>
+                          <th className="text-right">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tokenAccounts.map((account, index) => (
+                          <tr key={index}>
+                            <td className="font-medium">{account.owner}</td>
+                            <td className="text-right">
+                              {account.amount.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>

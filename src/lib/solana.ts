@@ -1,6 +1,3 @@
-import { Connection, PublicKey } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
-
 const HELIUS_RPC_URL = `https://mainnet.helius-rpc.com/?api-key=7d91ff22-2ce4-42f2-9901-eb31a62951e1`;
 
 interface TokenInfo {
@@ -19,10 +16,6 @@ interface TokenInfo {
 }
 
 export async function getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
-  if (!HELIUS_RPC_URL) {
-    throw new Error("Helius API key not configured");
-  }
-
   const response = await fetch(HELIUS_RPC_URL, {
     method: "POST",
     headers: {
@@ -66,40 +59,51 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
   };
 }
 
-interface TokenHolder {
+interface TokenAccount {
   address: string;
+  mint: string;
+  owner: string;
   amount: number;
+  delegatedAmount: number;
+  frozen: boolean;
 }
 
-export async function getTokenHolders(
-  tokenAddress: string,
-  limit: number = 100
-): Promise<TokenHolder[]> {
-  const connection = new Connection(HELIUS_RPC_URL);
-  const tokenPublicKey = new PublicKey(tokenAddress);
-
-  const accounts = await connection.getProgramAccounts(TOKEN_PROGRAM_ID, {
-    filters: [
-      {
-        dataSize: 165, // size of token account
+export async function getTokenAccounts(
+  mintAddress: string,
+  limit: number = 1000
+): Promise<TokenAccount[]> {
+  const response = await fetch(HELIUS_RPC_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "helius-test",
+      method: "getTokenAccounts",
+      params: {
+        mint: mintAddress,
+        limit: limit,
       },
-      {
-        memcmp: {
-          offset: 0,
-          bytes: tokenPublicKey.toBase58(),
-        },
-      },
-    ],
+    }),
   });
 
-  const holders: TokenHolder[] = accounts
-    .map(({ account, pubkey }) => ({
-      address: pubkey.toBase58(),
-      amount: Number(account.data.readBigInt64LE(64)) / 10 ** 9, // Assuming 9 decimals, adjust if different
-    }))
-    .filter((holder) => holder.amount > 0)
-    .sort((a, b) => b.amount - a.amount)
-    .slice(0, limit);
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
 
-  return holders;
+  const data = await response.json();
+
+  if (data.error) {
+    throw new Error(`API error: ${data.error.message}`);
+  }
+
+  return data.result.token_accounts.map((account) => ({
+    address: account.address,
+    mint: account.mint,
+    owner: account.owner,
+    amount: account.amount,
+    delegatedAmount: account.delegated_amount,
+    frozen: account.frozen,
+  }));
 }
