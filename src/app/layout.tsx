@@ -29,7 +29,6 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Link href={"/popular"}>Popular</Link>
         <Link href={"/scanner"}>Scanner</Link>
         {children}
       </body>

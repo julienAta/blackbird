@@ -1,37 +1,23 @@
 "use client";
+
 import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Power, Trash2 } from "lucide-react";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  useReactTable,
-  getCoreRowModel,
-  flexRender,
-} from "@tanstack/react-table";
 import { columns } from "./columns";
-import { TokenData, TokenCreationEvent } from "@/lib/types";
+import { DataTable } from "./data-table";
+import {
+  TokenData,
+  TokenCreationEvent,
+} from "@/components/token-scanner/types";
 
-const TokenScanner = () => {
+export default function TokenScanner() {
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [wsStatus, setWsStatus] = useState<
     "connecting" | "connected" | "disconnected"
   >("disconnected");
   const wsRef = useRef<WebSocket | null>(null);
-
-  const table = useReactTable({
-    data: tokens,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
 
   const connect = () => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -60,6 +46,12 @@ const TokenScanner = () => {
 
         if (data.txType === "create") {
           const tokenEvent = data as TokenCreationEvent;
+          const initialBuySol =
+            tokenEvent.initialBuy *
+            (tokenEvent.vSolInBondingCurve / tokenEvent.vTokensInBondingCurve);
+          const initialBuyPercent =
+            (tokenEvent.initialBuy / tokenEvent.vTokensInBondingCurve) * 100;
+
           setTokens((prev) =>
             [
               {
@@ -73,10 +65,16 @@ const TokenScanner = () => {
                 creator: tokenEvent.traderPublicKey,
                 marketCap: tokenEvent.marketCapSol,
                 initialBuy: tokenEvent.initialBuy,
+                initialBuySol,
+                initialBuyPercent,
+                totalSupply: tokenEvent.vTokensInBondingCurve,
+                volume24h: 0, // This would need to be updated via another subscription
+                holders: 1, // Initial holder count
+                liquidity: tokenEvent.vSolInBondingCurve,
               },
               ...prev,
             ].slice(0, 100)
-          ); // Keep last 100 tokens
+          );
         }
       } catch (error) {
         console.error("Error handling message:", error);
@@ -137,57 +135,8 @@ const TokenScanner = () => {
         </div>
       </CardHeader>
       <CardContent>
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id}>
-                      {flexRender(
-                        header.column.columnDef.header,
-                        header.getContext()
-                      )}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows?.length ? (
-                table.getRowModel().rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    data-state={row.getIsSelected() && "selected"}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext()
-                        )}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell
-                    colSpan={columns.length}
-                    className="h-24 text-center"
-                  >
-                    {wsStatus === "connected"
-                      ? "Waiting for new tokens..."
-                      : "Start the scanner to monitor new tokens"}
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <DataTable columns={columns} data={tokens} />
       </CardContent>
     </Card>
   );
-};
-
-export default TokenScanner;
+}
