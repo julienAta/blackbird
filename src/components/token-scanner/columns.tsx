@@ -11,32 +11,43 @@ export const columns: ColumnDef<TokenData>[] = [
     accessorKey: "timestamp",
     header: ({ column }) => {
       return (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-        >
-          Time
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
+        <div className="text-left">
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          >
+            Time
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        </div>
       );
     },
-    cell: ({ row }) => new Date(row.getValue("timestamp")).toLocaleTimeString(),
+    cell: ({ row }) => (
+      <div className="text-left">
+        {new Date(row.getValue("timestamp")).toLocaleTimeString()}
+      </div>
+    ),
   },
   {
     accessorKey: "name",
     header: ({ column }) => {
       return (
-        <Button
-          variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-        >
-          Token
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
+        <div className="text-left">
+          <Button
+            variant="ghost"
+            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          >
+            Token
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          </Button>
+        </div>
       );
     },
     cell: ({ row }) => (
-      <div className="flex items-center gap-2">
+      <div
+        className="flex items-center gap-2 text-left cursor-pointer hover:text-primary"
+        onClick={() => row.original.onSelect?.(row.original)}
+      >
         <span className="font-medium">{row.getValue("name")}</span>
         <Badge variant="outline">{row.original.symbol}</Badge>
       </div>
@@ -45,13 +56,16 @@ export const columns: ColumnDef<TokenData>[] = [
   {
     accessorKey: "marketCap",
     header: ({ column }) => (
-      <Button
-        variant="ghost"
-        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-      >
-        Market Cap
-        <ArrowUpDown className="ml-2 h-4 w-4" />
-      </Button>
+      <div className="text-right">
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="whitespace-nowrap"
+        >
+          Market Cap
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
     ),
     cell: ({ row }) => (
       <div className="text-right">
@@ -66,13 +80,16 @@ export const columns: ColumnDef<TokenData>[] = [
   {
     accessorKey: "volume24h",
     header: ({ column }) => (
-      <Button
-        variant="ghost"
-        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-      >
-        24h Volume
-        <ArrowUpDown className="ml-2 h-4 w-4" />
-      </Button>
+      <div className="text-right">
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="whitespace-nowrap"
+        >
+          24h Volume
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
     ),
     cell: ({ row }) => (
       <div className="text-right">
@@ -87,13 +104,15 @@ export const columns: ColumnDef<TokenData>[] = [
   {
     accessorKey: "holders",
     header: ({ column }) => (
-      <Button
-        variant="ghost"
-        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-      >
-        Holders
-        <ArrowUpDown className="ml-2 h-4 w-4" />
-      </Button>
+      <div className="text-right">
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+        >
+          Holders
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
     ),
     cell: ({ row }) => (
       <div className="text-right">
@@ -108,13 +127,16 @@ export const columns: ColumnDef<TokenData>[] = [
   {
     accessorKey: "liquidity",
     header: ({ column }) => (
-      <Button
-        variant="ghost"
-        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-      >
-        Liquidity
-        <ArrowUpDown className="ml-2 h-4 w-4" />
-      </Button>
+      <div className="text-right">
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="whitespace-nowrap"
+        >
+          Liquidity
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
     ),
     cell: ({ row }) => (
       <div className="text-right">
@@ -125,13 +147,16 @@ export const columns: ColumnDef<TokenData>[] = [
   {
     accessorKey: "initialBuySol",
     header: ({ column }) => (
-      <Button
-        variant="ghost"
-        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-      >
-        Initial Buy (SOL)
-        <ArrowUpDown className="ml-2 h-4 w-4" />
-      </Button>
+      <div className="text-right">
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="whitespace-nowrap"
+        >
+          Initial Buy (SOL)
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
     ),
     cell: ({ row }) => (
       <div className="text-right">
@@ -146,13 +171,16 @@ export const columns: ColumnDef<TokenData>[] = [
   {
     accessorKey: "initialBuyPercent",
     header: ({ column }) => (
-      <Button
-        variant="ghost"
-        onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-      >
-        Initial Buy %
-        <ArrowUpDown className="ml-2 h-4 w-4" />
-      </Button>
+      <div className="text-right">
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="whitespace-nowrap"
+        >
+          Initial Buy %
+          <ArrowUpDown className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
     ),
     cell: ({ row }) => (
       <div className="text-right">
@@ -162,6 +190,7 @@ export const columns: ColumnDef<TokenData>[] = [
   },
   {
     id: "actions",
+    header: () => <div className="text-right">Actions</div>,
     cell: ({ row }) => {
       const mint = row.original.mint;
       return (

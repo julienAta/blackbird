@@ -1,4 +1,4 @@
-import TokenScanner from "@/components/token-scanner/token-scanner";
+import { TokenScanner } from "@/components/token-scanner/token-scanner";
 
 export default async function Home() {
   // const tokens = await fetchTopVolumeTokens("24h", 10);

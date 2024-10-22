@@ -1,4 +1,4 @@
-import TokenScanner from "@/components/token-scanner/token-scanner";
+import { TokenScanner } from "@/components/token-scanner/token-scanner";
 import React from "react";
 
 function PumpScannerPage() {

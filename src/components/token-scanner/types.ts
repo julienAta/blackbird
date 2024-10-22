@@ -28,4 +28,37 @@ export interface TokenData {
   volume24h: number;
   holders: number;
   liquidity: number;
+  onSelect: (token: TokenData) => void;
+}
+
+export interface TradeEvent {
+  signature: string;
+  mint: string;
+  traderPublicKey: string;
+  txType: "buy" | "sell";
+  amount: number;
+  price: number;
+  timestamp: number;
+}
+
+export interface TokenDetailsProps {
+  token: TokenData;
+  trades: TradeEvent[];
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export interface TokenMetrics {
+  holders: Set<string>;
+  volume24h: number;
+  volumeByTime: {
+    [timestamp: number]: number;
+  };
+  trades24h: number;
+  buyCount24h: number;
+  sellCount24h: number;
+  uniqueTraders24h: Set<string>;
+  lastPrice: number;
+  highPrice24h: number;
+  lowPrice24h: number;
 }
