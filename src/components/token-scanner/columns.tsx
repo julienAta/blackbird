@@ -196,7 +196,7 @@ export const columns: ColumnDef<TokenData>[] = [
       return (
         <div className="flex justify-end">
           <a
-            href={`https://pump.fun/token/${mint}`}
+            href={`https://pump.fun/${mint}`}
             target="_blank"
             rel="noopener noreferrer"
             className="p-2 hover:bg-accent rounded-full transition-colors"
