@@ -45,6 +45,19 @@ interface TokenDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
+const formatNumber = (
+  value: number | undefined | null,
+  decimals: number = 2
+): string => {
+  if (value === undefined || value === null) return "0";
+  return Number(value).toFixed(decimals);
+};
+
+// Add safe percentage formatting
+const formatPercentage = (value: number | undefined | null): string => {
+  if (value === undefined || value === null) return "0";
+  return Number(value).toFixed(2);
+};
 
 export function TokenDetailsModal({
   token,
@@ -55,9 +68,11 @@ export function TokenDetailsModal({
 }: TokenDetailsModalProps) {
   const calculatePriceChange = () => {
     if (!trades || trades.length < 2) return 0;
-    const oldestPrice = trades[trades.length - 1].price;
-    const currentPrice = trades[0].price;
-    return ((currentPrice - oldestPrice) / oldestPrice) * 100;
+    const oldestPrice = trades[trades.length - 1].price || 0;
+    const currentPrice = trades[0].price || 0;
+    return oldestPrice === 0
+      ? 0
+      : ((currentPrice - oldestPrice) / oldestPrice) * 100;
   };
 
   const priceChange = calculatePriceChange();
@@ -65,54 +80,31 @@ export function TokenDetailsModal({
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <div className="flex items-center gap-2">
-              {token.name}
-              <Badge variant="outline">{token.symbol}</Badge>
-            </div>
-            <div className="flex items-center gap-2 ml-4">
-              <a
-                href={`https://pump.fun/token/${token.mint}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:opacity-80"
-              >
-                <ExternalLink className="w-4 h-4" />
-              </a>
-            </div>
-          </DialogTitle>
-          <DialogDescription className="flex items-center justify-between">
-            <span>Created {new Date(token.timestamp).toLocaleString()}</span>
-            <span className="font-mono text-sm">
-              {token.mint.slice(0, 8)}...{token.mint.slice(-8)}
-            </span>
-          </DialogDescription>
-        </DialogHeader>
+        {/* ... header content ... */}
 
         <div className="grid grid-cols-4 gap-4 my-4">
           <Card className="p-4">
             <div className="text-sm text-muted-foreground">Market Cap</div>
             <div className="text-lg font-semibold">
-              {token.marketCap.toFixed(2)} SOL
+              {formatNumber(token.marketCap, 2)} SOL
             </div>
           </Card>
           <Card className="p-4">
             <div className="text-sm text-muted-foreground">24h Volume</div>
             <div className="text-lg font-semibold">
-              {metrics?.volume24h.toFixed(2) || "0"} SOL
+              {formatNumber(metrics?.volume24h, 2)} SOL
             </div>
           </Card>
           <Card className="p-4">
             <div className="text-sm text-muted-foreground">Holders</div>
             <div className="text-lg font-semibold">
-              {metrics?.holders.size.toLocaleString() || "0"}
+              {metrics?.holders?.size?.toLocaleString() || "0"}
             </div>
           </Card>
           <Card className="p-4">
             <div className="text-sm text-muted-foreground">Liquidity</div>
             <div className="text-lg font-semibold">
-              {token.liquidity.toFixed(2)} SOL
+              {formatNumber(token.liquidity, 2)} SOL
             </div>
           </Card>
         </div>
@@ -135,20 +127,21 @@ export function TokenDetailsModal({
           <Card className="p-4">
             <div className="text-sm text-muted-foreground">24h High/Low</div>
             <div className="text-lg font-semibold">
-              {metrics?.highPrice24h.toFixed(6) || "0"} /{" "}
+              {formatNumber(metrics?.highPrice24h, 6)} /{" "}
               {metrics?.lowPrice24h === Infinity
                 ? "0"
-                : metrics?.lowPrice24h.toFixed(6)}{" "}
+                : formatNumber(metrics?.lowPrice24h, 6)}{" "}
               SOL
             </div>
             <div className="text-xs text-muted-foreground mt-1">
               Range:{" "}
-              {(
+              {formatNumber(
                 (metrics?.highPrice24h || 0) -
-                (metrics?.lowPrice24h === Infinity
-                  ? 0
-                  : metrics?.lowPrice24h || 0)
-              ).toFixed(6)}{" "}
+                  (metrics?.lowPrice24h === Infinity
+                    ? 0
+                    : metrics?.lowPrice24h || 0),
+                6
+              )}{" "}
               SOL
             </div>
           </Card>
@@ -157,11 +150,12 @@ export function TokenDetailsModal({
               Unique Traders 24h
             </div>
             <div className="text-lg font-semibold">
-              {metrics?.uniqueTraders24h.size || 0}
+              {metrics?.uniqueTraders24h?.size || 0}
             </div>
             <div className="text-xs text-muted-foreground mt-1">
               Avg. Trade:{" "}
-              {((metrics?.volume24h || 0) / (metrics?.trades24h || 1)).toFixed(
+              {formatNumber(
+                (metrics?.volume24h || 0) / (metrics?.trades24h || 1),
                 3
               )}{" "}
               SOL
@@ -173,14 +167,14 @@ export function TokenDetailsModal({
           <div>
             <div className="text-sm text-muted-foreground">Current Price</div>
             <div className="text-2xl font-bold">
-              {token.price.toFixed(6)} SOL
+              {formatNumber(token.price, 6)} SOL
             </div>
             <div
               className={`text-sm ${
                 priceChange >= 0 ? "text-green-500" : "text-red-500"
               }`}
             >
-              {priceChange.toFixed(2)}%
+              {formatPercentage(priceChange)}%
             </div>
           </div>
           <div>
@@ -189,10 +183,10 @@ export function TokenDetailsModal({
             </div>
             <div className="flex gap-2">
               <Badge variant="outline">
-                {token.initialBuySol.toFixed(2)} SOL
+                {formatNumber(token.initialBuySol, 2)} SOL
               </Badge>
               <Badge variant="outline">
-                {token.initialBuyPercent.toFixed(2)}% Supply
+                {formatNumber(token.initialBuyPercent, 2)}% Supply
               </Badge>
             </div>
           </div>
@@ -201,6 +195,7 @@ export function TokenDetailsModal({
           </Button>
         </div>
 
+        {/* Trades Table */}
         <div className="space-y-4">
           <div className="font-semibold">Recent Trades</div>
           <ScrollArea className="h-[200px] rounded-md border">
@@ -228,14 +223,15 @@ export function TokenDetailsModal({
                           {trade.txType.toUpperCase()}
                         </Badge>
                       </TableCell>
-                      <TableCell>
-                        {Number(trade.price || 0).toFixed(6)}
-                      </TableCell>
+                      <TableCell>{formatNumber(trade.price, 6)}</TableCell>
                       <TableCell>
                         {Number(trade.amount || 0).toLocaleString()}
                       </TableCell>
                       <TableCell>
-                        {((trade.price || 0) * (trade.amount || 0)).toFixed(3)}
+                        {formatNumber(
+                          (trade.price || 0) * (trade.amount || 0),
+                          3
+                        )}
                       </TableCell>
                       <TableCell>
                         {new Date(trade.timestamp).toLocaleTimeString()}

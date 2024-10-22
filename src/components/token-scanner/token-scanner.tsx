@@ -1,3 +1,4 @@
+// components/token-scanner/token-scanner.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -38,6 +39,7 @@ export function TokenScanner() {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedTokensRef = useRef<Set<string>>(new Set());
   const tokenMetricsRef = useRef<Map<string, TokenMetrics>>(new Map());
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
 
   const initializeTokenMetrics = (mint: string, initialHolder: string) => {
     tokenMetricsRef.current.set(mint, {
@@ -56,18 +58,46 @@ export function TokenScanner() {
 
   const handleTokenSelect = (token: TokenData) => {
     setSelectedToken(token);
-    if (
-      wsRef.current?.readyState === WebSocket.OPEN &&
-      !subscribedTokensRef.current.has(token.mint)
-    ) {
+  };
+
+  const handleNewToken = (tokenEvent: TokenCreationEvent) => {
+    const initialBuySol =
+      tokenEvent.initialBuy *
+      (tokenEvent.vSolInBondingCurve / tokenEvent.vTokensInBondingCurve);
+    const initialBuyPercent =
+      (tokenEvent.initialBuy / tokenEvent.vTokensInBondingCurve) * 100;
+
+    const newToken: TokenData = {
+      mint: tokenEvent.mint,
+      name: tokenEvent.name,
+      symbol: tokenEvent.symbol,
+      price: tokenEvent.vSolInBondingCurve / tokenEvent.vTokensInBondingCurve,
+      timestamp: Date.now(),
+      creator: tokenEvent.traderPublicKey,
+      marketCap: tokenEvent.marketCapSol,
+      initialBuy: tokenEvent.initialBuy,
+      initialBuySol,
+      initialBuyPercent,
+      totalSupply: tokenEvent.vTokensInBondingCurve,
+      volume24h: 0,
+      holders: 1,
+      liquidity: tokenEvent.vSolInBondingCurve,
+      onSelect: handleTokenSelect,
+    };
+
+    setTokens((prev) => [newToken, ...prev].slice(0, 100));
+    initializeTokenMetrics(tokenEvent.mint, tokenEvent.traderPublicKey);
+
+    // Immediately subscribe to trades
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({
           method: "subscribeTokenTrade",
-          keys: [token.mint],
+          keys: [tokenEvent.mint],
         })
       );
-      subscribedTokensRef.current.add(token.mint);
-      setTrades((prev) => new Map(prev).set(token.mint, []));
+      subscribedTokensRef.current.add(tokenEvent.mint);
+      setTrades((prev) => new Map(prev).set(tokenEvent.mint, []));
     }
   };
 
@@ -130,6 +160,7 @@ export function TokenScanner() {
             price: trade.price,
             volume24h: metrics!.volume24h,
             holders: metrics!.holders.size,
+            onSelect: handleTokenSelect,
           };
         }
         return token;
@@ -154,14 +185,17 @@ export function TokenScanner() {
         })
       );
 
-      // Resubscribe to existing token trades
-      subscribedTokensRef.current.forEach((mint) => {
-        wsRef.current?.send(
-          JSON.stringify({
-            method: "subscribeTokenTrade",
-            keys: [mint],
-          })
-        );
+      // Subscribe to all existing tokens' trades
+      tokens.forEach((token) => {
+        if (!subscribedTokensRef.current.has(token.mint)) {
+          wsRef.current?.send(
+            JSON.stringify({
+              method: "subscribeTokenTrade",
+              keys: [token.mint],
+            })
+          );
+          subscribedTokensRef.current.add(token.mint);
+        }
       });
     };
 
@@ -175,42 +209,14 @@ export function TokenScanner() {
         }
 
         if (data.txType === "create") {
-          const tokenEvent = data as TokenCreationEvent;
-          const initialBuySol =
-            tokenEvent.initialBuy *
-            (tokenEvent.vSolInBondingCurve / tokenEvent.vTokensInBondingCurve);
-          const initialBuyPercent =
-            (tokenEvent.initialBuy / tokenEvent.vTokensInBondingCurve) * 100;
-
-          const newToken: TokenData = {
-            mint: tokenEvent.mint,
-            name: tokenEvent.name,
-            symbol: tokenEvent.symbol,
-            price:
-              tokenEvent.vSolInBondingCurve / tokenEvent.vTokensInBondingCurve,
-            timestamp: Date.now(),
-            creator: tokenEvent.traderPublicKey,
-            marketCap: tokenEvent.marketCapSol,
-            initialBuy: tokenEvent.initialBuy,
-            initialBuySol,
-            initialBuyPercent,
-            totalSupply: tokenEvent.vTokensInBondingCurve,
-            volume24h: 0,
-            holders: 1,
-            liquidity: tokenEvent.vSolInBondingCurve,
-            onSelect: handleTokenSelect,
-          };
-
-          setTokens((prev) => [newToken, ...prev].slice(0, 100));
-          initializeTokenMetrics(tokenEvent.mint, tokenEvent.traderPublicKey);
+          handleNewToken(data as TokenCreationEvent);
         }
 
         if (data.txType === "buy" || data.txType === "sell") {
-          const tradeEvent: TradeEvent = {
+          updateTokenMetrics({
             ...data,
             timestamp: Date.now(),
-          };
-          updateTokenMetrics(tradeEvent);
+          });
         }
       } catch (error) {
         console.error("Error handling message:", error);
@@ -220,6 +226,11 @@ export function TokenScanner() {
     wsRef.current.onclose = () => {
       console.log("WebSocket closed");
       setWsStatus("disconnected");
+      // Attempt to reconnect
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      reconnectTimeoutRef.current = setTimeout(connect, 5000);
     };
 
     wsRef.current.onerror = (error) => {
@@ -229,6 +240,10 @@ export function TokenScanner() {
   };
 
   const disconnect = () => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+
     // Unsubscribe from all tokens
     subscribedTokensRef.current.forEach((mint) => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -253,7 +268,6 @@ export function TokenScanner() {
     setTrades(new Map());
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       disconnect();
