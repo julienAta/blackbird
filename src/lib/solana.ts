@@ -1,3 +1,5 @@
+import { Connection, PublicKey } from "@solana/web3.js";
+
 const HELIUS_RPC_URL = `https://mainnet.helius-rpc.com/?api-key=7d91ff22-2ce4-42f2-9901-eb31a62951e1`;
 
 interface TokenInfo {
@@ -15,7 +17,31 @@ interface TokenInfo {
   extensions?: Record<string, any>;
 }
 
-export async function getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
+interface TokenAccount {
+  address: string;
+  mint: string;
+  owner: string;
+  amount: number;
+  delegatedAmount: number;
+  frozen: boolean;
+}
+
+interface TokenAccountsResponse {
+  total: number;
+  limit: number;
+  page: number;
+  token_accounts: TokenAccount[];
+}
+
+interface TokenBalance {
+  mint: string;
+  amount: number;
+  decimals: number;
+  tokenName?: string;
+  tokenSymbol?: string;
+}
+
+async function callHeliusAPI(method: string, params: any): Promise<any> {
   const response = await fetch(HELIUS_RPC_URL, {
     method: "POST",
     headers: {
@@ -23,11 +49,9 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
-      id: "my-id",
-      method: "getAsset",
-      params: {
-        id: tokenAddress,
-      },
+      id: "helius-request",
+      method,
+      params,
     }),
   });
 
@@ -36,12 +60,15 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
   }
 
   const data = await response.json();
-
   if (data.error) {
     throw new Error(`API error: ${data.error.message}`);
   }
 
-  const result = data.result;
+  return data.result;
+}
+
+export async function getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
+  const result = await callHeliusAPI("getAsset", { id: tokenAddress });
 
   return {
     address: result.id,
@@ -59,51 +86,71 @@ export async function getTokenInfo(tokenAddress: string): Promise<TokenInfo> {
   };
 }
 
-interface TokenAccount {
-  address: string;
-  mint: string;
-  owner: string;
-  amount: number;
-  delegatedAmount: number;
-  frozen: boolean;
-}
-
 export async function getTokenAccounts(
   mintAddress: string,
+  page: number = 1,
   limit: number = 1000
-): Promise<TokenAccount[]> {
-  const response = await fetch(HELIUS_RPC_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+): Promise<TokenAccountsResponse> {
+  return callHeliusAPI("getTokenAccounts", {
+    mint: mintAddress,
+    page,
+    limit,
+    displayOptions: {
+      showZeroBalance: false,
     },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: "helius-test",
-      method: "getTokenAccounts",
-      params: {
-        mint: mintAddress,
-        limit: limit,
-      },
-    }),
   });
+}
 
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+export async function getAllTokenAccounts(
+  mintAddress: string
+): Promise<TokenAccount[]> {
+  let allAccounts: TokenAccount[] = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore) {
+    const response = await getTokenAccounts(mintAddress, page, 1000);
+    allAccounts = [...allAccounts, ...response.token_accounts];
+    hasMore = response.token_accounts.length === 1000;
+    page++;
   }
 
-  const data = await response.json();
+  return allAccounts;
+}
 
-  if (data.error) {
-    throw new Error(`API error: ${data.error.message}`);
-  }
+export async function getTokenBalances(
+  walletAddress: string
+): Promise<TokenBalance[]> {
+  const result = await callHeliusAPI("getTokenBalances", {
+    wallet: walletAddress,
+  });
+  return result.tokens;
+}
 
-  return data.result.token_accounts.map((account) => ({
-    address: account.address,
-    mint: account.mint,
-    owner: account.owner,
-    amount: account.amount,
-    delegatedAmount: account.delegated_amount,
-    frozen: account.frozen,
-  }));
+export async function analyzeTokenHolders(
+  mintAddress: string,
+  totalSupply: number
+): Promise<{
+  largeHolders: TokenAccount[];
+  suspiciousAccounts: TokenAccount[];
+}> {
+  const accounts = await getAllTokenAccounts(mintAddress);
+  const largeHolderThreshold = totalSupply * 0.01; // 1% of total supply
+
+  const largeHolders = accounts.filter(
+    (account) => account.amount > largeHolderThreshold
+  );
+
+  const suspiciousAccounts = accounts.filter(
+    (account) => account.amount % 1000000 === 0 && account.amount > 0
+  );
+
+  return {
+    largeHolders,
+    suspiciousAccounts,
+  };
+}
+
+export function createConnection(): Connection {
+  return new Connection(HELIUS_RPC_URL);
 }

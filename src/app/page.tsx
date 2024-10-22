@@ -1,7 +1,8 @@
-import TokenScanner from "@/components/TokenScanner";
-import Image from "next/image";
+import TokenScanner from "@/components/token-scanner";
 
-export default function Home() {
+export default async function Home() {
+  // const tokens = await fetchTopVolumeTokens("24h", 10);
+
   return (
     <div className="flex h-screen w-full justify-center items-center">
       <TokenScanner />
