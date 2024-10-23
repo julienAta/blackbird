@@ -7,26 +7,24 @@ import { Badge } from "@/components/ui/badge";
 import { TokenData } from "@/components/token-scanner/types";
 
 export const columns: ColumnDef<TokenData>[] = [
+  // In columns.tsx, update the timestamp column:
   {
     accessorKey: "timestamp",
-    header: ({ column }) => {
-      return (
-        <div className="text-left">
-          <Button
-            variant="ghost"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            Time
-            <ArrowUpDown className="ml-2 h-4 w-4" />
-          </Button>
-        </div>
+    header: "Age",
+    cell: ({ row }) => {
+      const ageInSeconds = Math.floor(
+        (Date.now() - row.getValue("timestamp")) / 1000
       );
+      if (ageInSeconds < 60) {
+        return `${ageInSeconds}s ago`;
+      }
+      const ageInMinutes = Math.floor(ageInSeconds / 60);
+      if (ageInMinutes < 60) {
+        return `${ageInMinutes}m ago`;
+      }
+      const ageInHours = Math.floor(ageInMinutes / 60);
+      return `${ageInHours}h ago`;
     },
-    cell: ({ row }) => (
-      <div className="text-left">
-        {new Date(row.getValue("timestamp")).toLocaleTimeString()}
-      </div>
-    ),
   },
   {
     accessorKey: "name",

@@ -1,6 +1,4 @@
-// components/token-scanner/token-scanner.tsx
 "use client";
-
 import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,21 +11,21 @@ import { TokenData, TokenCreationEvent, TradeEvent } from "./types";
 
 interface TokenMetrics {
   holders: Set<string>;
-  volume24h: number;
+  totalVolume: number;
   volumeByTime: {
     [timestamp: number]: number;
   };
-  trades24h: number;
-  buyCount24h: number;
-  sellCount24h: number;
-  uniqueTraders24h: Set<string>;
+  createdAt: number;
+  trades: number;
+  buyCount: number;
+  sellCount: number;
+  uniqueTraders: Set<string>;
   lastPrice: number;
-  highPrice24h: number;
-  lowPrice24h: number;
+  highPrice: number;
+  lowPrice: number;
 }
 
 export function TokenScanner() {
-  // State management
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [selectedToken, setSelectedToken] = useState<TokenData | null>(null);
   const [trades, setTrades] = useState<Map<string, TradeEvent[]>>(new Map());
@@ -35,7 +33,6 @@ export function TokenScanner() {
     "connecting" | "connected" | "disconnected"
   >("disconnected");
 
-  // Refs for persistent data
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedTokensRef = useRef<Set<string>>(new Set());
   const tokenMetricsRef = useRef<Map<string, TokenMetrics>>(new Map());
@@ -44,15 +41,16 @@ export function TokenScanner() {
   const initializeTokenMetrics = (mint: string, initialHolder: string) => {
     tokenMetricsRef.current.set(mint, {
       holders: new Set([initialHolder]),
-      volume24h: 0,
+      totalVolume: 0,
       volumeByTime: {},
-      trades24h: 0,
-      buyCount24h: 0,
-      sellCount24h: 0,
-      uniqueTraders24h: new Set([initialHolder]),
+      createdAt: Date.now(),
+      trades: 0,
+      buyCount: 0,
+      sellCount: 0,
+      uniqueTraders: new Set([initialHolder]),
       lastPrice: 0,
-      highPrice24h: 0,
-      lowPrice24h: Infinity,
+      highPrice: 0,
+      lowPrice: Infinity,
     });
   };
 
@@ -72,7 +70,7 @@ export function TokenScanner() {
       name: tokenEvent.name,
       symbol: tokenEvent.symbol,
       price: tokenEvent.vSolInBondingCurve / tokenEvent.vTokensInBondingCurve,
-      timestamp: Date.now(),
+      timestamp: Date.now(), // Creation timestamp
       creator: tokenEvent.traderPublicKey,
       marketCap: tokenEvent.marketCapSol,
       initialBuy: tokenEvent.initialBuy,
@@ -88,7 +86,6 @@ export function TokenScanner() {
     setTokens((prev) => [newToken, ...prev].slice(0, 100));
     initializeTokenMetrics(tokenEvent.mint, tokenEvent.traderPublicKey);
 
-    // Immediately subscribe to trades
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({
@@ -102,46 +99,33 @@ export function TokenScanner() {
   };
 
   const updateTokenMetrics = (trade: TradeEvent) => {
-    const now = Date.now();
-    const oneDayAgo = now - 24 * 60 * 60 * 1000;
-
     let metrics = tokenMetricsRef.current.get(trade.mint);
     if (!metrics) {
       initializeTokenMetrics(trade.mint, trade.traderPublicKey);
       metrics = tokenMetricsRef.current.get(trade.mint)!;
     }
 
-    // Update holders
-    metrics.holders.add(trade.traderPublicKey);
-
-    // Update volume
+    // Update trading metrics
     const tradeVolume = (trade.amount || 0) * (trade.price || 0);
-    metrics.volume24h += tradeVolume;
+
+    metrics.totalVolume += tradeVolume;
     metrics.volumeByTime[trade.timestamp] = tradeVolume;
+    metrics.trades++;
 
-    // Clean up old volume data
-    Object.keys(metrics.volumeByTime).forEach((timestamp: any) => {
-      if (Number(timestamp) < oneDayAgo) {
-        metrics!.volume24h -= metrics.volumeByTime[Number(timestamp)] || 0;
-        delete metrics!.volumeByTime[timestamp];
-      }
-    });
-
-    // Update trade counts
-    metrics.trades24h++;
     if (trade.txType === "buy") {
-      metrics.buyCount24h++;
+      metrics.buyCount++;
     } else {
-      metrics.sellCount24h++;
+      metrics.sellCount++;
     }
 
-    // Update unique traders
-    metrics.uniqueTraders24h.add(trade.traderPublicKey);
+    // Update holders and traders
+    metrics.holders.add(trade.traderPublicKey);
+    metrics.uniqueTraders.add(trade.traderPublicKey);
 
     // Update price metrics
     metrics.lastPrice = trade.price;
-    metrics.highPrice24h = Math.max(metrics.highPrice24h, trade.price);
-    metrics.lowPrice24h = Math.min(metrics.lowPrice24h, trade.price);
+    metrics.highPrice = Math.max(metrics.highPrice, trade.price);
+    metrics.lowPrice = Math.min(metrics.lowPrice, trade.price);
 
     // Update trades list
     setTrades((prev) => {
@@ -158,7 +142,7 @@ export function TokenScanner() {
           return {
             ...token,
             price: trade.price,
-            volume24h: metrics!.volume24h,
+            volume24h: metrics!.totalVolume,
             holders: metrics!.holders.size,
             onSelect: handleTokenSelect,
           };
@@ -185,7 +169,7 @@ export function TokenScanner() {
         })
       );
 
-      // Subscribe to all existing tokens' trades
+      // Resubscribe to existing tokens
       tokens.forEach((token) => {
         if (!subscribedTokensRef.current.has(token.mint)) {
           wsRef.current?.send(
@@ -226,7 +210,6 @@ export function TokenScanner() {
     wsRef.current.onclose = () => {
       console.log("WebSocket closed");
       setWsStatus("disconnected");
-      // Attempt to reconnect
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
@@ -244,7 +227,6 @@ export function TokenScanner() {
       clearTimeout(reconnectTimeoutRef.current);
     }
 
-    // Unsubscribe from all tokens
     subscribedTokensRef.current.forEach((mint) => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
