@@ -40,11 +40,11 @@ export interface TradeEvent {
   mint: string;
   traderPublicKey: string;
   txType: "buy" | "sell";
-  amount: number;
-  price: number;
-  timestamp: number;
+  tokenAmount: number;
   vSolInBondingCurve: number;
   vTokensInBondingCurve: number;
+  timestamp: number;
+  marketCapSol: number;
 }
 
 export interface TokenDetailsProps {
@@ -69,4 +69,5 @@ export interface TokenMetrics {
   lastPrice: number;
   highPrice: number;
   lowPrice: number;
+  marketCapSol: number;
 }

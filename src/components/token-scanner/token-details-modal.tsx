@@ -1,6 +1,12 @@
 "use client";
 
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -13,6 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ExternalLink } from "lucide-react";
 import { TokenData, TradeEvent, TokenMetrics } from "./types";
 import { useQuery } from "@tanstack/react-query";
 import { fetchSolPrice } from "@/app/actions/token";
@@ -29,20 +36,20 @@ const formatNumber = (
   value: number | undefined | null,
   decimals: number = 2
 ): string => {
-  if (value === undefined || value === null) return "0";
+  if (value === undefined || value === null || isNaN(value)) return "0";
   return Number(value).toFixed(decimals);
 };
 
 const formatUsd = (value: number | undefined | null): string => {
-  if (value === undefined || value === null) return "$0.00";
-  return `$${value.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  if (value === undefined || value === null || isNaN(value)) return "$0.00";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(value);
 };
 
 const formatPercentage = (value: number | undefined | null): string => {
-  if (value === undefined || value === null) return "0";
+  if (value === undefined || value === null || isNaN(value)) return "0";
   return Number(value).toFixed(2);
 };
 
@@ -61,8 +68,12 @@ export function TokenDetailsModal({
 
   const calculatePriceChange = () => {
     if (!trades || trades.length < 2) return 0;
-    const oldestPrice = trades[trades.length - 1].price || 0;
-    const currentPrice = trades[0].price || 0;
+    const oldestTrade = trades[trades.length - 1];
+    const latestTrade = trades[0];
+    const oldestPrice =
+      oldestTrade.vSolInBondingCurve / oldestTrade.vTokensInBondingCurve;
+    const currentPrice =
+      latestTrade.vSolInBondingCurve / latestTrade.vTokensInBondingCurve;
     return oldestPrice === 0
       ? 0
       : ((currentPrice - oldestPrice) / oldestPrice) * 100;
@@ -70,22 +81,36 @@ export function TokenDetailsModal({
 
   const priceChange = calculatePriceChange();
 
+  const getTradePrice = (trade: TradeEvent) => {
+    return trade.vSolInBondingCurve / trade.vTokensInBondingCurve;
+  };
+
+  // Update the getTradeTotalSol function in TokenDetailsModal:
+  const getTradeTotalSol = (trade: TradeEvent) => {
+    return (
+      (trade.tokenAmount || 0) *
+      (trade.vSolInBondingCurve / trade.vTokensInBondingCurve)
+    );
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
+      s
       <DialogContent className="max-w-4xl">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-2xl font-bold">
-              {token.name} ({token.symbol})
-            </h2>
-          </div>
-        </div>
+        <DialogHeader>
+          <DialogTitle className="text-2xl font-bold">
+            {token.name} ({token.symbol})
+          </DialogTitle>
+          <DialogDescription>
+            Token details and recent trading activity
+          </DialogDescription>
+        </DialogHeader>
 
         <div className="grid grid-cols-4 gap-4 my-4">
           <Card className="p-4">
             <div className="text-sm text-muted-foreground">Market Cap</div>
             <div className="text-lg font-semibold">
-              {formatNumber(token.marketCap, 2)} SOL
+              {formatNumber(metrics?.marketCapSol, 2)} SOL
               <div className="text-xs text-muted-foreground">
                 {formatUsd(token.marketCap * solPrice)}
               </div>
@@ -224,51 +249,56 @@ export function TokenDetailsModal({
               </TableHeader>
               <TableBody>
                 {trades?.length > 0 ? (
-                  trades.map((trade) => (
-                    <TableRow key={trade.signature}>
-                      <TableCell>
-                        <Badge
-                          className={
-                            trade.txType === "buy"
-                              ? "bg-green-500"
-                              : "bg-red-500"
-                          }
-                        >
-                          {trade.txType.toUpperCase()}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div>{formatNumber(trade.price, 6)} SOL</div>
-                        <div className="text-xs text-muted-foreground">
-                          {formatUsd(trade.price * solPrice)}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {Number(trade.amount || 0).toLocaleString()}
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          {formatNumber(
-                            (trade.price || 0) * (trade.amount || 0),
-                            3
-                          )}{" "}
-                          SOL
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {formatUsd(
-                            (trade.price || 0) * (trade.amount || 0) * solPrice
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {new Date(trade.timestamp).toLocaleTimeString()}
-                      </TableCell>
-                      <TableCell className="font-mono">
-                        {trade.traderPublicKey.slice(0, 4)}...
-                        {trade.traderPublicKey.slice(-4)}
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  trades.map((trade, index) => {
+                    const price = getTradePrice(trade);
+                    const totalSol = getTradeTotalSol(trade);
+
+                    return (
+                      <TableRow
+                        key={`${trade.signature}-${trade.timestamp}-${index}`}
+                      >
+                        <TableCell>
+                          <Badge
+                            className={
+                              trade.txType === "buy"
+                                ? "bg-green-500"
+                                : "bg-red-500"
+                            }
+                          >
+                            {trade.txType.toUpperCase()}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div>{formatNumber(price, 6)} SOL</div>
+                          <div className="text-xs text-muted-foreground">
+                            {formatUsd(price * solPrice)}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            {Number(trade.tokenAmount || 0).toLocaleString()}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Tokens
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {/* User spent this amount in SOL */}
+                          <div>{formatNumber(totalSol, 3)} SOL</div>
+                          <div className="text-xs text-muted-foreground">
+                            {formatUsd(totalSol * solPrice)}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {new Date(trade.timestamp).toLocaleTimeString()}
+                        </TableCell>
+                        <TableCell className="font-mono">
+                          {trade.traderPublicKey.slice(0, 4)}...
+                          {trade.traderPublicKey.slice(-4)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 ) : (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center h-24">

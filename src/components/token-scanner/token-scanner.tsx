@@ -10,6 +10,7 @@ import { columns } from "./columns";
 import { TokenData, TokenCreationEvent, TradeEvent } from "./types";
 import { useQuery } from "@tanstack/react-query";
 import { fetchSolPrice } from "@/app/actions/token";
+
 interface TokenMetrics {
   holders: Set<string>;
   totalVolume: number;
@@ -152,7 +153,7 @@ export function TokenScanner() {
             priceUsd: metrics!.lastPrice * solPrice,
             volume24h: metrics!.totalVolume,
             volume24hUsd: metrics!.totalVolume * solPrice,
-            marketCapUsd: token.marketCap * solPrice,
+            marketCap: trade.marketCapSol,
             holders: metrics!.holders.size,
             onSelect: handleTokenSelect,
           };

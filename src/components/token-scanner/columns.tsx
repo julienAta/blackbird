@@ -219,15 +219,27 @@ export const columns: ColumnDef<TokenData>[] = [
     cell: ({ row }) => {
       const mint = row.original.mint;
       return (
-        <div className="flex justify-end">
-          <a
-            href={`https://pump.fun/${mint}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="p-2 hover:bg-accent rounded-full transition-colors"
-          >
-            <ExternalLink className="w-4 h-4" />
-          </a>
+        <div className="flex">
+          <div className="flex justify-end">
+            <a
+              href={`https://pump.fun/${mint}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 hover:bg-accent rounded-full transition-colors"
+            >
+              P
+            </a>
+          </div>
+          <div className="flex justify-end">
+            <a
+              href={`https://gmgn.ai/sol/token/${mint}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 hover:bg-accent rounded-full transition-colors"
+            >
+              G
+            </a>
+          </div>
         </div>
       );
     },
