@@ -105,19 +105,24 @@ export function TokenScanner() {
       setTrades((prev) => new Map(prev).set(tokenEvent.mint, []));
     }
   };
-
+  const getTradeTotalSol = (trade: TradeEvent) => {
+    return (
+      (trade.tokenAmount || 0) *
+      (trade.vSolInBondingCurve / trade.vTokensInBondingCurve)
+    );
+  };
   const updateTokenMetrics = (trade: TradeEvent) => {
     let metrics = tokenMetricsRef.current.get(trade.mint);
     if (!metrics) {
       initializeTokenMetrics(trade.mint, trade.traderPublicKey);
       metrics = tokenMetricsRef.current.get(trade.mint)!;
     }
-
+    const totalTradeSol = getTradeTotalSol(trade);
     // Calculate volume from bonding curve values
     const tradeVolume = trade.vSolInBondingCurve || 0;
 
-    metrics.totalVolume = tradeVolume;
-    metrics.volumeByTime[trade.timestamp] = tradeVolume;
+    metrics.totalVolume = metrics.totalVolume + totalTradeSol;
+    metrics.volumeByTime[trade.timestamp] = metrics.totalVolume;
     metrics.trades++;
 
     if (trade.txType === "buy") {
