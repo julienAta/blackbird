@@ -121,7 +121,7 @@ export function TokenScanner() {
     // Calculate volume from bonding curve values
     const tradeVolume = trade.vSolInBondingCurve || 0;
 
-    metrics.totalVolume = metrics.totalVolume + totalTradeSol;
+    metrics.totalVolume += totalTradeSol;
     metrics.volumeByTime[trade.timestamp] = metrics.totalVolume;
     metrics.trades++;
 
