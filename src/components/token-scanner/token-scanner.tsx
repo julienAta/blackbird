@@ -8,7 +8,8 @@ import { DataTable } from "./data-table";
 import { TokenDetailsModal } from "./token-details-modal";
 import { columns } from "./columns";
 import { TokenData, TokenCreationEvent, TradeEvent } from "./types";
-
+import { useQuery } from "@tanstack/react-query";
+import { fetchSolPrice } from "@/app/actions/token";
 interface TokenMetrics {
   holders: Set<string>;
   totalVolume: number;
@@ -37,6 +38,12 @@ export function TokenScanner() {
   const subscribedTokensRef = useRef<Set<string>>(new Set());
   const tokenMetricsRef = useRef<Map<string, TokenMetrics>>(new Map());
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+
+  const { data: solPrice = 0 } = useQuery({
+    queryKey: ["solPrice"],
+    queryFn: fetchSolPrice,
+    refetchInterval: 60000, // Refetch every minute
+  });
 
   const initializeTokenMetrics = (mint: string, initialHolder: string) => {
     tokenMetricsRef.current.set(mint, {
@@ -105,10 +112,10 @@ export function TokenScanner() {
       metrics = tokenMetricsRef.current.get(trade.mint)!;
     }
 
-    // Update trading metrics
-    const tradeVolume = (trade.amount || 0) * (trade.price || 0);
+    // Calculate volume from bonding curve values
+    const tradeVolume = trade.vSolInBondingCurve || 0;
 
-    metrics.totalVolume += tradeVolume;
+    metrics.totalVolume = tradeVolume;
     metrics.volumeByTime[trade.timestamp] = tradeVolume;
     metrics.trades++;
 
@@ -123,9 +130,9 @@ export function TokenScanner() {
     metrics.uniqueTraders.add(trade.traderPublicKey);
 
     // Update price metrics
-    metrics.lastPrice = trade.price;
-    metrics.highPrice = Math.max(metrics.highPrice, trade.price);
-    metrics.lowPrice = Math.min(metrics.lowPrice, trade.price);
+    metrics.lastPrice = trade.vSolInBondingCurve / trade.vTokensInBondingCurve;
+    metrics.highPrice = Math.max(metrics.highPrice, metrics.lastPrice);
+    metrics.lowPrice = Math.min(metrics.lowPrice, metrics.lastPrice);
 
     // Update trades list
     setTrades((prev) => {
@@ -141,8 +148,11 @@ export function TokenScanner() {
         if (token.mint === trade.mint) {
           return {
             ...token,
-            price: trade.price,
+            price: metrics!.lastPrice,
+            priceUsd: metrics!.lastPrice * solPrice,
             volume24h: metrics!.totalVolume,
+            volume24hUsd: metrics!.totalVolume * solPrice,
+            marketCapUsd: token.marketCap * solPrice,
             holders: metrics!.holders.size,
             onSelect: handleTokenSelect,
           };
@@ -151,7 +161,6 @@ export function TokenScanner() {
       })
     );
   };
-
   const connect = () => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 

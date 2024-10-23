@@ -1,13 +1,6 @@
-// components/token-scanner/token-details-modal.tsx
 "use client";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -20,23 +13,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink } from "lucide-react";
-import { TokenData, TradeEvent } from "./types";
-
-interface TokenMetrics {
-  holders: Set<string>;
-  volume24h: number;
-  volumeByTime: {
-    [timestamp: number]: number;
-  };
-  trades24h: number;
-  buyCount24h: number;
-  sellCount24h: number;
-  uniqueTraders24h: Set<string>;
-  lastPrice: number;
-  highPrice24h: number;
-  lowPrice24h: number;
-}
+import { TokenData, TradeEvent, TokenMetrics } from "./types";
+import { useQuery } from "@tanstack/react-query";
+import { fetchSolPrice } from "@/app/actions/token";
 
 interface TokenDetailsModalProps {
   token: TokenData;
@@ -45,6 +24,7 @@ interface TokenDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
+
 const formatNumber = (
   value: number | undefined | null,
   decimals: number = 2
@@ -53,7 +33,14 @@ const formatNumber = (
   return Number(value).toFixed(decimals);
 };
 
-// Add safe percentage formatting
+const formatUsd = (value: number | undefined | null): string => {
+  if (value === undefined || value === null) return "$0.00";
+  return `$${value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
 const formatPercentage = (value: number | undefined | null): string => {
   if (value === undefined || value === null) return "0";
   return Number(value).toFixed(2);
@@ -66,6 +53,12 @@ export function TokenDetailsModal({
   isOpen,
   onClose,
 }: TokenDetailsModalProps) {
+  const { data: solPrice = 0 } = useQuery({
+    queryKey: ["solPrice"],
+    queryFn: fetchSolPrice,
+    refetchInterval: 60000,
+  });
+
   const calculatePriceChange = () => {
     if (!trades || trades.length < 2) return 0;
     const oldestPrice = trades[trades.length - 1].price || 0;
@@ -80,19 +73,31 @@ export function TokenDetailsModal({
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl">
-        {/* ... header content ... */}
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-2xl font-bold">
+              {token.name} ({token.symbol})
+            </h2>
+          </div>
+        </div>
 
         <div className="grid grid-cols-4 gap-4 my-4">
           <Card className="p-4">
             <div className="text-sm text-muted-foreground">Market Cap</div>
             <div className="text-lg font-semibold">
               {formatNumber(token.marketCap, 2)} SOL
+              <div className="text-xs text-muted-foreground">
+                {formatUsd(token.marketCap * solPrice)}
+              </div>
             </div>
           </Card>
           <Card className="p-4">
-            <div className="text-sm text-muted-foreground">24h Volume</div>
+            <div className="text-sm text-muted-foreground">Total Volume</div>
             <div className="text-lg font-semibold">
-              {formatNumber(metrics?.volume24h, 2)} SOL
+              {formatNumber(metrics?.totalVolume, 2)} SOL
+              <div className="text-xs text-muted-foreground">
+                {formatUsd((metrics?.totalVolume || 0) * solPrice)}
+              </div>
             </div>
           </Card>
           <Card className="p-4">
@@ -105,57 +110,53 @@ export function TokenDetailsModal({
             <div className="text-sm text-muted-foreground">Liquidity</div>
             <div className="text-lg font-semibold">
               {formatNumber(token.liquidity, 2)} SOL
+              <div className="text-xs text-muted-foreground">
+                {formatUsd(token.liquidity * solPrice)}
+              </div>
             </div>
           </Card>
         </div>
 
         <div className="grid grid-cols-3 gap-4 mb-4">
           <Card className="p-4">
-            <div className="text-sm text-muted-foreground">24h Trades</div>
-            <div className="text-lg font-semibold">
-              {metrics?.trades24h || 0}
-            </div>
+            <div className="text-sm text-muted-foreground">Total Trades</div>
+            <div className="text-lg font-semibold">{metrics?.trades || 0}</div>
             <div className="flex justify-between text-xs text-muted-foreground mt-1">
               <span className="text-green-500">
-                {metrics?.buyCount24h || 0} buys
+                {metrics?.buyCount || 0} buys
               </span>
               <span className="text-red-500">
-                {metrics?.sellCount24h || 0} sells
+                {metrics?.sellCount || 0} sells
               </span>
             </div>
           </Card>
           <Card className="p-4">
-            <div className="text-sm text-muted-foreground">24h High/Low</div>
+            <div className="text-sm text-muted-foreground">Price High/Low</div>
             <div className="text-lg font-semibold">
-              {formatNumber(metrics?.highPrice24h, 6)} /{" "}
-              {metrics?.lowPrice24h === Infinity
+              {formatNumber(metrics?.highPrice, 6)} /{" "}
+              {metrics?.lowPrice === Infinity
                 ? "0"
-                : formatNumber(metrics?.lowPrice24h, 6)}{" "}
+                : formatNumber(metrics?.lowPrice, 6)}{" "}
               SOL
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              Range:{" "}
-              {formatNumber(
-                (metrics?.highPrice24h || 0) -
-                  (metrics?.lowPrice24h === Infinity
+              <div className="text-xs text-muted-foreground">
+                {formatUsd((metrics?.highPrice || 0) * solPrice)} /{" "}
+                {formatUsd(
+                  (metrics?.lowPrice === Infinity
                     ? 0
-                    : metrics?.lowPrice24h || 0),
-                6
-              )}{" "}
-              SOL
+                    : metrics?.lowPrice || 0) * solPrice
+                )}
+              </div>
             </div>
           </Card>
           <Card className="p-4">
-            <div className="text-sm text-muted-foreground">
-              Unique Traders 24h
-            </div>
+            <div className="text-sm text-muted-foreground">Unique Traders</div>
             <div className="text-lg font-semibold">
-              {metrics?.uniqueTraders24h?.size || 0}
+              {metrics?.uniqueTraders?.size || 0}
             </div>
             <div className="text-xs text-muted-foreground mt-1">
               Avg. Trade:{" "}
               {formatNumber(
-                (metrics?.volume24h || 0) / (metrics?.trades24h || 1),
+                (metrics?.totalVolume || 0) / (metrics?.trades || 1),
                 3
               )}{" "}
               SOL
@@ -168,6 +169,9 @@ export function TokenDetailsModal({
             <div className="text-sm text-muted-foreground">Current Price</div>
             <div className="text-2xl font-bold">
               {formatNumber(token.price, 6)} SOL
+              <div className="text-sm text-muted-foreground">
+                {formatUsd(token.price * solPrice)}
+              </div>
             </div>
             <div
               className={`text-sm ${
@@ -184,18 +188,26 @@ export function TokenDetailsModal({
             <div className="flex gap-2">
               <Badge variant="outline">
                 {formatNumber(token.initialBuySol, 2)} SOL
+                <span className="text-xs ml-1 text-muted-foreground">
+                  ({formatUsd(token.initialBuySol * solPrice)})
+                </span>
               </Badge>
               <Badge variant="outline">
                 {formatNumber(token.initialBuyPercent, 2)}% Supply
               </Badge>
             </div>
           </div>
-          <Button size="lg" className="px-8">
-            Buy
+          <Button
+            size="lg"
+            className="px-8"
+            onClick={() =>
+              window.open(`https://pump.fun/${token.mint}`, "_blank")
+            }
+          >
+            Trade
           </Button>
         </div>
 
-        {/* Trades Table */}
         <div className="space-y-4">
           <div className="font-semibold">Recent Trades</div>
           <ScrollArea className="h-[200px] rounded-md border">
@@ -203,7 +215,7 @@ export function TokenDetailsModal({
               <TableHeader>
                 <TableRow>
                   <TableHead>Type</TableHead>
-                  <TableHead>Price (SOL)</TableHead>
+                  <TableHead>Price</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Total</TableHead>
                   <TableHead>Time</TableHead>
@@ -216,22 +228,37 @@ export function TokenDetailsModal({
                     <TableRow key={trade.signature}>
                       <TableCell>
                         <Badge
-                          variant={
-                            trade.txType === "buy" ? "default" : "destructive"
+                          className={
+                            trade.txType === "buy"
+                              ? "bg-green-500"
+                              : "bg-red-500"
                           }
                         >
                           {trade.txType.toUpperCase()}
                         </Badge>
                       </TableCell>
-                      <TableCell>{formatNumber(trade.price, 6)}</TableCell>
+                      <TableCell>
+                        <div>{formatNumber(trade.price, 6)} SOL</div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatUsd(trade.price * solPrice)}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         {Number(trade.amount || 0).toLocaleString()}
                       </TableCell>
                       <TableCell>
-                        {formatNumber(
-                          (trade.price || 0) * (trade.amount || 0),
-                          3
-                        )}
+                        <div>
+                          {formatNumber(
+                            (trade.price || 0) * (trade.amount || 0),
+                            3
+                          )}{" "}
+                          SOL
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatUsd(
+                            (trade.price || 0) * (trade.amount || 0) * solPrice
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         {new Date(trade.timestamp).toLocaleTimeString()}

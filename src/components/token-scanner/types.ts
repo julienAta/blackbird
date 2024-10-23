@@ -13,6 +13,7 @@ export interface TokenCreationEvent {
   uri: string;
 }
 
+// types.ts
 export interface TokenData {
   mint: string;
   name: string;
@@ -28,7 +29,10 @@ export interface TokenData {
   volume24h: number;
   holders: number;
   liquidity: number;
-  onSelect: (token: TokenData) => void;
+  onSelect?: (token: TokenData) => void;
+  priceUsd?: number;
+  marketCapUsd?: number;
+  volume24hUsd?: number;
 }
 
 export interface TradeEvent {
@@ -39,6 +43,8 @@ export interface TradeEvent {
   amount: number;
   price: number;
   timestamp: number;
+  vSolInBondingCurve: number;
+  vTokensInBondingCurve: number;
 }
 
 export interface TokenDetailsProps {
@@ -48,17 +54,19 @@ export interface TokenDetailsProps {
   onClose: () => void;
 }
 
+// types.ts
 export interface TokenMetrics {
   holders: Set<string>;
-  volume24h: number;
+  totalVolume: number; // Track total volume
   volumeByTime: {
     [timestamp: number]: number;
   };
-  trades24h: number;
-  buyCount24h: number;
-  sellCount24h: number;
-  uniqueTraders24h: Set<string>;
+  createdAt: number;
+  trades: number; // Total trades
+  buyCount: number; // Total buys
+  sellCount: number; // Total sells
+  uniqueTraders: Set<string>;
   lastPrice: number;
-  highPrice24h: number;
-  lowPrice24h: number;
+  highPrice: number;
+  lowPrice: number;
 }

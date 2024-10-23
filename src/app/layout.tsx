@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import Link from "next/link";
-
+import { Providers } from "@/lib/Provider";
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
   variable: "--font-geist-sans",
@@ -43,7 +43,9 @@ export default function RootLayout({
             Scanner
           </Link>
         </nav>
-        <main className="container mx-auto p-4">{children}</main>
+        <main className="container mx-auto p-4">
+          <Providers>{children}</Providers>
+        </main>
       </body>
     </html>
   );

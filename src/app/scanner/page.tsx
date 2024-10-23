@@ -1,11 +1,25 @@
+// app/page.tsx
 import { TokenScanner } from "@/components/token-scanner/token-scanner";
-import React from "react";
+import { fetchSolPrice } from "../actions/token";
+import {
+  HydrationBoundary,
+  dehydrate,
+  QueryClient,
+} from "@tanstack/react-query";
 
-function PumpScannerPage() {
+async function PumpScannerPage() {
+  const queryClient = new QueryClient();
+
+  // Prefetch SOL price
+  await queryClient.prefetchQuery({
+    queryKey: ["solPrice"],
+    queryFn: fetchSolPrice,
+  });
+
   return (
-    <div>
+    <HydrationBoundary state={dehydrate(queryClient)}>
       <TokenScanner />
-    </div>
+    </HydrationBoundary>
   );
 }
 

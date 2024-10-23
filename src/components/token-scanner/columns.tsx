@@ -5,7 +5,8 @@ import { ArrowUpDown, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TokenData } from "@/components/token-scanner/types";
-
+import { fetchSolPrice } from "@/app/actions/token";
+import { useQuery } from "@tanstack/react-query";
 export const columns: ColumnDef<TokenData>[] = [
   // In columns.tsx, update the timestamp column:
   {
@@ -65,14 +66,29 @@ export const columns: ColumnDef<TokenData>[] = [
         </Button>
       </div>
     ),
-    cell: ({ row }) => (
-      <div className="text-right">
-        {row.getValue<number>("marketCap").toFixed(2)} SOL
-      </div>
-    ),
-    filterFn: (row, id, value) => {
-      const filterValue = Number(value);
-      return filterValue === 0 || row.getValue<number>(id) >= filterValue;
+    cell: ({ row }) => {
+      // Use hook inside cell component
+      const { data: solPrice = 0 } = useQuery({
+        queryKey: ["solPrice"],
+        queryFn: fetchSolPrice,
+      });
+
+      const marketCapSol = row.getValue<number>("marketCap");
+      const marketCapUsd = marketCapSol * solPrice;
+
+      return (
+        <div className="text-right">
+          <div>
+            $
+            {marketCapUsd.toLocaleString(undefined, {
+              maximumFractionDigits: 2,
+            })}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {marketCapSol.toFixed(2)} SOL
+          </div>
+        </div>
+      );
     },
   },
   {
@@ -84,19 +100,30 @@ export const columns: ColumnDef<TokenData>[] = [
           onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           className="whitespace-nowrap"
         >
-          24h Volume
+          Volume
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
       </div>
     ),
-    cell: ({ row }) => (
-      <div className="text-right">
-        {row.getValue<number>("volume24h").toFixed(2)} SOL
-      </div>
-    ),
-    filterFn: (row, id, value) => {
-      const filterValue = Number(value);
-      return filterValue === 0 || row.getValue<number>(id) >= filterValue;
+    cell: ({ row }) => {
+      const { data: solPrice = 0 } = useQuery({
+        queryKey: ["solPrice"],
+        queryFn: fetchSolPrice,
+      });
+
+      const volumeSol = row.getValue<number>("volume24h");
+      const volumeUsd = volumeSol * solPrice;
+
+      return (
+        <div className="text-right">
+          <div>
+            ${volumeUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {volumeSol.toFixed(2)} SOL
+          </div>
+        </div>
+      );
     },
   },
   {
