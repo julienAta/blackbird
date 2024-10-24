@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,22 +10,11 @@ import { columns } from "./columns";
 import { TokenData, TokenCreationEvent, TradeEvent } from "./types";
 import { useQuery } from "@tanstack/react-query";
 import { fetchSolPrice } from "@/app/actions/token";
-
-interface TokenMetrics {
-  holders: Set<string>;
-  totalVolume: number;
-  volumeByTime: {
-    [timestamp: number]: number;
-  };
-  createdAt: number;
-  trades: number;
-  buyCount: number;
-  sellCount: number;
-  uniqueTraders: Set<string>;
-  lastPrice: number;
-  highPrice: number;
-  lowPrice: number;
-}
+import { TokenMetrics } from "./types";
+// Performance optimization constants
+const BUFFER_INTERVAL = 1000; // Batch updates every second
+const MAX_TOKENS = 1000;
+const MAX_TRADES_PER_TOKEN = 5000;
 
 export function TokenScanner() {
   const [tokens, setTokens] = useState<TokenData[]>([]);
@@ -35,139 +24,200 @@ export function TokenScanner() {
     "connecting" | "connected" | "disconnected"
   >("disconnected");
 
+  // WebSocket and data management refs
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedTokensRef = useRef<Set<string>>(new Set());
   const tokenMetricsRef = useRef<Map<string, TokenMetrics>>(new Map());
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout>(
+    setTimeout(() => {
+      connect();
+    }, 5000)
+  );
+
+  // Buffering refs for batched updates
+  const pendingTokenUpdatesRef = useRef<Map<string, Partial<TokenData>>>(
+    new Map()
+  );
+
+  const pendingTradeUpdatesRef = useRef<Map<string, TradeEvent[]>>(new Map());
+  const updateTimeoutRef = useRef<NodeJS.Timeout>(
+    setTimeout(() => {
+      flushUpdates();
+    }, BUFFER_INTERVAL)
+  );
 
   const { data: solPrice = 0 } = useQuery({
     queryKey: ["solPrice"],
     queryFn: fetchSolPrice,
-    refetchInterval: 60000, // Refetch every minute
+    refetchInterval: 60000,
   });
 
-  const initializeTokenMetrics = (mint: string, initialHolder: string) => {
-    tokenMetricsRef.current.set(mint, {
-      holders: new Set([initialHolder]),
-      totalVolume: 0,
-      volumeByTime: {},
-      createdAt: Date.now(),
-      trades: 0,
-      buyCount: 0,
-      sellCount: 0,
-      uniqueTraders: new Set([initialHolder]),
-      lastPrice: 0,
-      highPrice: 0,
-      lowPrice: Infinity,
-    });
-  };
+  const initializeTokenMetrics = useCallback(
+    (mint: string, initialHolder: string) => {
+      tokenMetricsRef.current.set(mint, {
+        holders: new Set([initialHolder]),
+        totalVolume: 0,
+        volumeByTime: {},
+        createdAt: Date.now(),
+        trades: 0,
+        buyCount: 0,
+        sellCount: 0,
+        uniqueTraders: new Set([initialHolder]),
+        lastPrice: 0,
+        highPrice: 0,
+        lowPrice: Infinity,
+        marketCapSol: 0,
+      });
+    },
+    []
+  );
 
-  const handleTokenSelect = (token: TokenData) => {
+  const handleTokenSelect = useCallback((token: TokenData) => {
     setSelectedToken(token);
-  };
+  }, []);
 
-  const handleNewToken = (tokenEvent: TokenCreationEvent) => {
-    const initialBuySol =
-      tokenEvent.initialBuy *
-      (tokenEvent.vSolInBondingCurve / tokenEvent.vTokensInBondingCurve);
-    const initialBuyPercent =
-      (tokenEvent.initialBuy / tokenEvent.vTokensInBondingCurve) * 100;
-
-    const newToken: TokenData = {
-      mint: tokenEvent.mint,
-      name: tokenEvent.name,
-      symbol: tokenEvent.symbol,
-      price: tokenEvent.vSolInBondingCurve / tokenEvent.vTokensInBondingCurve,
-      timestamp: Date.now(), // Creation timestamp
-      creator: tokenEvent.traderPublicKey,
-      marketCap: tokenEvent.marketCapSol,
-      initialBuy: tokenEvent.initialBuy,
-      initialBuySol,
-      initialBuyPercent,
-      totalSupply: tokenEvent.vTokensInBondingCurve,
-      volume24h: 0,
-      holders: 1,
-      liquidity: tokenEvent.vSolInBondingCurve,
-      onSelect: handleTokenSelect,
-    };
-
-    setTokens((prev) => [newToken, ...prev].slice(0, 100));
-    initializeTokenMetrics(tokenEvent.mint, tokenEvent.traderPublicKey);
-
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          method: "subscribeTokenTrade",
-          keys: [tokenEvent.mint],
-        })
-      );
-      subscribedTokensRef.current.add(tokenEvent.mint);
-      setTrades((prev) => new Map(prev).set(tokenEvent.mint, []));
-    }
-  };
-  const getTradeTotalSol = (trade: TradeEvent) => {
+  const getTradeTotalSol = useCallback((trade: TradeEvent) => {
     return (
       (trade.tokenAmount || 0) *
       (trade.vSolInBondingCurve / trade.vTokensInBondingCurve)
     );
-  };
-  const updateTokenMetrics = (trade: TradeEvent) => {
-    let metrics = tokenMetricsRef.current.get(trade.mint);
-    if (!metrics) {
-      initializeTokenMetrics(trade.mint, trade.traderPublicKey);
-      metrics = tokenMetricsRef.current.get(trade.mint)!;
-    }
-    const totalTradeSol = getTradeTotalSol(trade);
-    // Calculate volume from bonding curve values
-    const tradeVolume = trade.vSolInBondingCurve || 0;
+  }, []);
 
-    metrics.totalVolume += totalTradeSol;
-    metrics.volumeByTime[trade.timestamp] = metrics.totalVolume;
-    metrics.trades++;
+  // Batch update processor
+  const flushUpdates = useCallback(() => {
+    if (
+      pendingTokenUpdatesRef.current.size === 0 &&
+      pendingTradeUpdatesRef.current.size === 0
+    )
+      return;
 
-    if (trade.txType === "buy") {
-      metrics.buyCount++;
-    } else {
-      metrics.sellCount++;
-    }
+    setTokens((prev) => {
+      const updatedTokens = [...prev];
+      pendingTokenUpdatesRef.current.forEach((token, mint) => {
+        const index = updatedTokens.findIndex((t) => t.mint === mint);
+        if (index !== -1) {
+          updatedTokens[index] = { ...updatedTokens[index], ...token };
+        }
+      });
+      return updatedTokens;
+    });
 
-    // Update holders and traders
-    metrics.holders.add(trade.traderPublicKey);
-    metrics.uniqueTraders.add(trade.traderPublicKey);
-
-    // Update price metrics
-    metrics.lastPrice = trade.vSolInBondingCurve / trade.vTokensInBondingCurve;
-    metrics.highPrice = Math.max(metrics.highPrice, metrics.lastPrice);
-    metrics.lowPrice = Math.min(metrics.lowPrice, metrics.lastPrice);
-
-    // Update trades list
     setTrades((prev) => {
       const newTrades = new Map(prev);
-      const tokenTrades = newTrades.get(trade.mint) || [];
-      newTrades.set(trade.mint, [trade, ...tokenTrades].slice(0, 50));
+      pendingTradeUpdatesRef.current.forEach((tradeUpdates, mint) => {
+        const existingTrades = newTrades.get(mint) || [];
+        newTrades.set(
+          mint,
+          [...tradeUpdates, ...existingTrades].slice(0, MAX_TRADES_PER_TOKEN)
+        );
+      });
       return newTrades;
     });
 
-    // Update token state
-    setTokens((prev) =>
-      prev.map((token) => {
-        if (token.mint === trade.mint) {
-          return {
-            ...token,
-            price: metrics!.lastPrice,
-            priceUsd: metrics!.lastPrice * solPrice,
-            volume24h: metrics!.totalVolume,
-            volume24hUsd: metrics!.totalVolume * solPrice,
-            marketCap: trade.marketCapSol,
-            holders: metrics!.holders.size,
-            onSelect: handleTokenSelect,
-          };
-        }
-        return token;
-      })
-    );
-  };
-  const connect = () => {
+    // Clear buffers after processing
+    pendingTokenUpdatesRef.current.clear();
+    pendingTradeUpdatesRef.current.clear();
+  }, []);
+
+  // Buffer updates scheduler
+  const bufferUpdates = useCallback(() => {
+    if (updateTimeoutRef.current) {
+      clearTimeout(updateTimeoutRef.current);
+    }
+    updateTimeoutRef.current = setTimeout(flushUpdates, BUFFER_INTERVAL);
+  }, [flushUpdates]);
+
+  const handleNewToken = useCallback(
+    (tokenEvent: TokenCreationEvent) => {
+      const initialBuySol =
+        tokenEvent.initialBuy *
+        (tokenEvent.vSolInBondingCurve / tokenEvent.vTokensInBondingCurve);
+      const initialBuyPercent =
+        (tokenEvent.initialBuy / tokenEvent.vTokensInBondingCurve) * 100;
+
+      const newToken: TokenData = {
+        mint: tokenEvent.mint,
+        name: tokenEvent.name,
+        symbol: tokenEvent.symbol,
+        price: tokenEvent.vSolInBondingCurve / tokenEvent.vTokensInBondingCurve,
+        timestamp: Date.now(),
+        creator: tokenEvent.traderPublicKey,
+        marketCap: tokenEvent.marketCapSol,
+        initialBuy: tokenEvent.initialBuy,
+        initialBuySol,
+        initialBuyPercent,
+        totalSupply: tokenEvent.vTokensInBondingCurve,
+        volume24h: 0,
+        holders: 1,
+        liquidity: tokenEvent.vSolInBondingCurve,
+        onSelect: handleTokenSelect,
+      };
+
+      setTokens((prev) => [newToken, ...prev].slice(0, MAX_TOKENS));
+      initializeTokenMetrics(tokenEvent.mint, tokenEvent.traderPublicKey);
+
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            method: "subscribeTokenTrade",
+            keys: [tokenEvent.mint],
+          })
+        );
+        subscribedTokensRef.current.add(tokenEvent.mint);
+        setTrades((prev) => new Map(prev).set(tokenEvent.mint, []));
+      }
+    },
+    [handleTokenSelect, initializeTokenMetrics]
+  );
+
+  const updateTokenMetrics = useCallback(
+    (trade: TradeEvent) => {
+      let metrics = tokenMetricsRef.current.get(trade.mint);
+      if (!metrics) {
+        initializeTokenMetrics(trade.mint, trade.traderPublicKey);
+        metrics = tokenMetricsRef.current.get(trade.mint)!;
+      }
+
+      const totalTradeSol = getTradeTotalSol(trade);
+
+      // Update metrics
+      metrics.totalVolume += totalTradeSol;
+      metrics.volumeByTime[trade.timestamp] = metrics.totalVolume;
+      metrics.trades++;
+      if (trade.txType === "buy") {
+        metrics.buyCount++;
+      } else {
+        metrics.sellCount++;
+      }
+
+      metrics.holders.add(trade.traderPublicKey);
+      metrics.uniqueTraders.add(trade.traderPublicKey);
+      metrics.lastPrice =
+        trade.vSolInBondingCurve / trade.vTokensInBondingCurve;
+      metrics.highPrice = Math.max(metrics.highPrice, metrics.lastPrice);
+      metrics.lowPrice = Math.min(metrics.lowPrice, metrics.lastPrice);
+
+      // Buffer token updates
+      pendingTokenUpdatesRef.current.set(trade.mint, {
+        price: metrics.lastPrice,
+        priceUsd: metrics.lastPrice * solPrice,
+        volume24h: metrics.totalVolume,
+        volume24hUsd: metrics.totalVolume * solPrice,
+        marketCap: trade.marketCapSol,
+        holders: metrics.holders.size,
+      });
+
+      // Buffer trade updates
+      const pendingTrades =
+        pendingTradeUpdatesRef.current.get(trade.mint) || [];
+      pendingTradeUpdatesRef.current.set(trade.mint, [trade, ...pendingTrades]);
+
+      bufferUpdates();
+    },
+    [solPrice, getTradeTotalSol, initializeTokenMetrics, bufferUpdates]
+  );
+
+  const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     setWsStatus("connecting");
@@ -177,14 +227,12 @@ export function TokenScanner() {
       console.log("Connected to WebSocket");
       setWsStatus("connected");
 
-      // Subscribe to new tokens
       wsRef.current?.send(
         JSON.stringify({
           method: "subscribeNewToken",
         })
       );
 
-      // Resubscribe to existing tokens
       tokens.forEach((token) => {
         if (!subscribedTokensRef.current.has(token.mint)) {
           wsRef.current?.send(
@@ -235,9 +283,9 @@ export function TokenScanner() {
       console.error("WebSocket error:", error);
       setWsStatus("disconnected");
     };
-  };
+  }, [handleNewToken, updateTokenMetrics, tokens]);
 
-  const disconnect = () => {
+  const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
     }
@@ -257,19 +305,22 @@ export function TokenScanner() {
     setWsStatus("disconnected");
     subscribedTokensRef.current.clear();
     tokenMetricsRef.current.clear();
-  };
+  }, []);
 
-  const clearTokens = () => {
+  const clearTokens = useCallback(() => {
     disconnect();
     setTokens([]);
     setTrades(new Map());
-  };
+  }, [disconnect]);
 
   useEffect(() => {
     return () => {
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+      }
       disconnect();
     };
-  }, []);
+  }, [disconnect]);
 
   return (
     <>
