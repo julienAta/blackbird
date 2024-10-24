@@ -147,7 +147,7 @@ export function TokenScanner() {
         initialBuySol,
         initialBuyPercent,
         totalSupply: tokenEvent.vTokensInBondingCurve,
-        volume24h: 0,
+        volume24h: initialBuySol,
         holders: 1,
         liquidity: tokenEvent.vSolInBondingCurve,
         onSelect: handleTokenSelect,
