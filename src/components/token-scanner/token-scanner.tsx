@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Power, Trash2 } from "lucide-react";
+import { Download, Power, Trash2 } from "lucide-react";
 import { DataTable } from "./data-table";
 import { TokenDetailsModal } from "./token-details-modal";
 import { columns } from "./columns";
@@ -11,10 +11,13 @@ import { TokenData, TokenCreationEvent, TradeEvent } from "./types";
 import { useQuery } from "@tanstack/react-query";
 import { fetchSolPrice } from "@/app/actions/token";
 import { TokenMetrics } from "./types";
+import Papa from "papaparse";
 
-const BUFFER_INTERVAL = 0;
+const BUFFER_INTERVAL = 500;
 const MAX_TOKENS = 10000;
 const MAX_TRADES_PER_TOKEN = 500000000;
+const MIN_HOLDERS_TO_KEEP = 50; // Minimum number of holders to keep a token
+const REMOVE_AFTER_MINUTES = 1; // Remove tokens with less than MIN_HOLDERS_TO_KEEP after this many minutes
 
 export function TokenScanner() {
   const [tokens, setTokens] = useState<TokenData[]>([]);
@@ -330,6 +333,84 @@ export function TokenScanner() {
     };
   }, [cleanup]);
 
+  useEffect(() => {
+    const removeInactiveTokens = () => {
+      const now = Date.now();
+      setTokens((prevTokens) =>
+        prevTokens.filter((token) => {
+          const createdAt =
+            tokenMetricsRef.current.get(token.mint)?.createdAt || 0;
+          const timeSinceCreated = (now - createdAt) / 1000 / 60; // minutes
+          const numHolders =
+            tokenMetricsRef.current.get(token.mint)?.holders.size || 0;
+          return (
+            timeSinceCreated < REMOVE_AFTER_MINUTES ||
+            numHolders >= MIN_HOLDERS_TO_KEEP
+          );
+        })
+      );
+      console.log("wiped tokens");
+    };
+
+    const intervalId = setInterval(removeInactiveTokens, 60000); // Check every minute
+    return () => clearInterval(intervalId);
+  }, []);
+  const downloadTokensAsCSV = useCallback(() => {
+    const csvData = Papa.unparse(tokens, {
+      columns: [
+        "mint",
+        "name",
+        "symbol",
+        "price",
+        "timestamp",
+        "creator",
+        "marketCap",
+        "initialBuy",
+        "initialBuySol",
+        "initialBuyPercent",
+        "totalSupply",
+        "volume24h",
+        "holders",
+        "liquidity",
+      ],
+    });
+    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "tokens.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [tokens]);
+
+  const downloadTradesAsCSV = useCallback(() => {
+    const allTrades: TradeEvent[] = [];
+    trades.forEach((tokenTrades) => {
+      allTrades.push(...tokenTrades);
+    });
+    const csvData = Papa.unparse(allTrades, {
+      columns: [
+        "mint",
+        "traderPublicKey",
+        "txType",
+        "tokenAmount",
+        "vSolInBondingCurve",
+        "vTokensInBondingCurve",
+        "timestamp",
+        "marketCapSol",
+      ],
+    });
+    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "trades.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [trades]);
+
   return (
     <>
       <Card className="w-full h-full">
@@ -340,6 +421,24 @@ export function TokenScanner() {
               <Badge>{wsStatus}</Badge>
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={downloadTokensAsCSV}
+                disabled={tokens.length === 0}
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Export Tokens
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={downloadTradesAsCSV}
+                disabled={trades.size === 0}
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Export Trades
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
