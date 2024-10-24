@@ -11,8 +11,8 @@ import { TokenData, TokenCreationEvent, TradeEvent } from "./types";
 import { useQuery } from "@tanstack/react-query";
 import { fetchSolPrice } from "@/app/actions/token";
 import { TokenMetrics } from "./types";
-// Performance optimization constants
-const BUFFER_INTERVAL = 1000; // Batch updates every second
+
+const BUFFER_INTERVAL = 1000;
 const MAX_TOKENS = 1000;
 const MAX_TRADES_PER_TOKEN = 5000;
 
@@ -24,33 +24,38 @@ export function TokenScanner() {
     "connecting" | "connected" | "disconnected"
   >("disconnected");
 
-  // WebSocket and data management refs
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedTokensRef = useRef<Set<string>>(new Set());
   const tokenMetricsRef = useRef<Map<string, TokenMetrics>>(new Map());
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout>(
-    setTimeout(() => {
-      connect();
-    }, 5000)
-  );
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isConnectingRef = useRef<boolean>(false);
 
-  // Buffering refs for batched updates
   const pendingTokenUpdatesRef = useRef<Map<string, Partial<TokenData>>>(
     new Map()
   );
-
   const pendingTradeUpdatesRef = useRef<Map<string, TradeEvent[]>>(new Map());
-  const updateTimeoutRef = useRef<NodeJS.Timeout>(
-    setTimeout(() => {
-      flushUpdates();
-    }, BUFFER_INTERVAL)
-  );
+  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const { data: solPrice = 0 } = useQuery({
     queryKey: ["solPrice"],
     queryFn: fetchSolPrice,
     refetchInterval: 60000,
   });
+
+  const cleanup = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    if (updateTimeoutRef.current) {
+      clearTimeout(updateTimeoutRef.current);
+      updateTimeoutRef.current = null;
+    }
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+  }, []);
 
   const initializeTokenMetrics = useCallback(
     (mint: string, initialHolder: string) => {
@@ -83,7 +88,6 @@ export function TokenScanner() {
     );
   }, []);
 
-  // Batch update processor
   const flushUpdates = useCallback(() => {
     if (
       pendingTokenUpdatesRef.current.size === 0 &&
@@ -114,17 +118,18 @@ export function TokenScanner() {
       return newTrades;
     });
 
-    // Clear buffers after processing
     pendingTokenUpdatesRef.current.clear();
     pendingTradeUpdatesRef.current.clear();
   }, []);
 
-  // Buffer updates scheduler
   const bufferUpdates = useCallback(() => {
     if (updateTimeoutRef.current) {
       clearTimeout(updateTimeoutRef.current);
     }
-    updateTimeoutRef.current = setTimeout(flushUpdates, BUFFER_INTERVAL);
+    updateTimeoutRef.current = setTimeout(() => {
+      flushUpdates();
+      updateTimeoutRef.current = null;
+    }, BUFFER_INTERVAL);
   }, [flushUpdates]);
 
   const handleNewToken = useCallback(
@@ -147,7 +152,7 @@ export function TokenScanner() {
         initialBuySol,
         initialBuyPercent,
         totalSupply: tokenEvent.vTokensInBondingCurve,
-        volume24h: initialBuySol,
+        volume24h: 0,
         holders: 1,
         liquidity: tokenEvent.vSolInBondingCurve,
         onSelect: handleTokenSelect,
@@ -180,7 +185,6 @@ export function TokenScanner() {
 
       const totalTradeSol = getTradeTotalSol(trade);
 
-      // Update metrics
       metrics.totalVolume += totalTradeSol;
       metrics.volumeByTime[trade.timestamp] = metrics.totalVolume;
       metrics.trades++;
@@ -196,8 +200,8 @@ export function TokenScanner() {
         trade.vSolInBondingCurve / trade.vTokensInBondingCurve;
       metrics.highPrice = Math.max(metrics.highPrice, metrics.lastPrice);
       metrics.lowPrice = Math.min(metrics.lowPrice, metrics.lastPrice);
+      metrics.marketCapSol = trade.marketCapSol;
 
-      // Buffer token updates
       pendingTokenUpdatesRef.current.set(trade.mint, {
         price: metrics.lastPrice,
         priceUsd: metrics.lastPrice * solPrice,
@@ -207,7 +211,6 @@ export function TokenScanner() {
         holders: metrics.holders.size,
       });
 
-      // Buffer trade updates
       const pendingTrades =
         pendingTradeUpdatesRef.current.get(trade.mint) || [];
       pendingTradeUpdatesRef.current.set(trade.mint, [trade, ...pendingTrades]);
@@ -218,76 +221,96 @@ export function TokenScanner() {
   );
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (wsRef.current || isConnectingRef.current) {
+      console.log("Connection already exists or is in progress");
+      return;
+    }
 
+    isConnectingRef.current = true;
     setWsStatus("connecting");
-    wsRef.current = new WebSocket("wss://pumpportal.fun/api/data");
 
-    wsRef.current.onopen = () => {
-      console.log("Connected to WebSocket");
-      setWsStatus("connected");
+    cleanup();
 
-      wsRef.current?.send(
-        JSON.stringify({
-          method: "subscribeNewToken",
-        })
-      );
+    try {
+      wsRef.current = new WebSocket("wss://pumpportal.fun/api/data");
 
-      tokens.forEach((token) => {
-        if (!subscribedTokensRef.current.has(token.mint)) {
-          wsRef.current?.send(
-            JSON.stringify({
-              method: "subscribeTokenTrade",
-              keys: [token.mint],
-            })
-          );
-          subscribedTokensRef.current.add(token.mint);
+      wsRef.current.onopen = () => {
+        console.log("Connected to WebSocket");
+        isConnectingRef.current = false;
+        setWsStatus("connected");
+
+        wsRef.current?.send(JSON.stringify({ method: "subscribeNewToken" }));
+
+        tokens.forEach((token) => {
+          if (!subscribedTokensRef.current.has(token.mint)) {
+            wsRef.current?.send(
+              JSON.stringify({
+                method: "subscribeTokenTrade",
+                keys: [token.mint],
+              })
+            );
+            subscribedTokensRef.current.add(token.mint);
+          }
+        });
+      };
+
+      wsRef.current.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.message?.includes("Successfully subscribed")) {
+            console.log("Subscription confirmed:", data.message);
+            return;
+          }
+
+          if (data.txType === "create") {
+            handleNewToken(data as TokenCreationEvent);
+          }
+
+          if (data.txType === "buy" || data.txType === "sell") {
+            updateTokenMetrics({
+              ...data,
+              timestamp: Date.now(),
+            });
+          }
+        } catch (error) {
+          console.error("Error handling message:", error);
         }
-      });
-    };
+      };
 
-    wsRef.current.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
+      wsRef.current.onclose = () => {
+        console.log("WebSocket closed");
+        isConnectingRef.current = false;
+        setWsStatus("disconnected");
 
-        if (data.message?.includes("Successfully subscribed")) {
-          console.log("Subscription confirmed:", data.message);
-          return;
+        if (wsRef.current !== null) {
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+          }
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectTimeoutRef.current = null;
+            if (!isConnectingRef.current && !wsRef.current) {
+              connect();
+            }
+          }, 5000);
         }
+      };
 
-        if (data.txType === "create") {
-          handleNewToken(data as TokenCreationEvent);
-        }
-
-        if (data.txType === "buy" || data.txType === "sell") {
-          updateTokenMetrics({
-            ...data,
-            timestamp: Date.now(),
-          });
-        }
-      } catch (error) {
-        console.error("Error handling message:", error);
-      }
-    };
-
-    wsRef.current.onclose = () => {
-      console.log("WebSocket closed");
+      wsRef.current.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        isConnectingRef.current = false;
+        setWsStatus("disconnected");
+      };
+    } catch (error) {
+      console.error("Error setting up WebSocket:", error);
+      isConnectingRef.current = false;
       setWsStatus("disconnected");
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      reconnectTimeoutRef.current = setTimeout(connect, 5000);
-    };
-
-    wsRef.current.onerror = (error) => {
-      console.error("WebSocket error:", error);
-      setWsStatus("disconnected");
-    };
-  }, [handleNewToken, updateTokenMetrics, tokens]);
+    }
+  }, [cleanup, handleNewToken, updateTokenMetrics, tokens]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
 
     subscribedTokensRef.current.forEach((mint) => {
@@ -301,11 +324,12 @@ export function TokenScanner() {
       }
     });
 
-    wsRef.current?.close();
+    cleanup();
     setWsStatus("disconnected");
+    isConnectingRef.current = false;
     subscribedTokensRef.current.clear();
     tokenMetricsRef.current.clear();
-  }, []);
+  }, [cleanup]);
 
   const clearTokens = useCallback(() => {
     disconnect();
@@ -315,12 +339,9 @@ export function TokenScanner() {
 
   useEffect(() => {
     return () => {
-      if (updateTimeoutRef.current) {
-        clearTimeout(updateTimeoutRef.current);
-      }
-      disconnect();
+      cleanup();
     };
-  }, [disconnect]);
+  }, [cleanup]);
 
   return (
     <>
@@ -345,6 +366,7 @@ export function TokenScanner() {
                 variant={wsStatus === "connected" ? "destructive" : "default"}
                 size="sm"
                 onClick={wsStatus === "connected" ? disconnect : connect}
+                disabled={isConnectingRef.current}
               >
                 <Power className="w-4 h-4 mr-2" />
                 {wsStatus === "connected" ? "Stop" : "Start"} Scanner
