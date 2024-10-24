@@ -16,8 +16,9 @@ import Papa from "papaparse";
 const BUFFER_INTERVAL = 500;
 const MAX_TOKENS = 10000;
 const MAX_TRADES_PER_TOKEN = 500000000;
-const MIN_HOLDERS_TO_KEEP = 50; // Minimum number of holders to keep a token
+const MIN_HOLDERS_TO_KEEP = 30; // Minimum number of holders to keep a token
 const REMOVE_AFTER_MINUTES = 1; // Remove tokens with less than MIN_HOLDERS_TO_KEEP after this many minutes
+const MIN_MARKET_CAP_TO_KEEP = 10000; // Minimum market cap to keep a token in $
 
 export function TokenScanner() {
   const [tokens, setTokens] = useState<TokenData[]>([]);
@@ -343,9 +344,11 @@ export function TokenScanner() {
           const timeSinceCreated = (now - createdAt) / 1000 / 60; // minutes
           const numHolders =
             tokenMetricsRef.current.get(token.mint)?.holders.size || 0;
+          const marketCap = token.marketCap * solPrice;
           return (
             timeSinceCreated < REMOVE_AFTER_MINUTES ||
-            numHolders >= MIN_HOLDERS_TO_KEEP
+            numHolders >= MIN_HOLDERS_TO_KEEP ||
+            marketCap < MIN_MARKET_CAP_TO_KEEP
           );
         })
       );
