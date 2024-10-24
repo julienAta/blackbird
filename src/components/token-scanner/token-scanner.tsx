@@ -12,9 +12,9 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchSolPrice } from "@/app/actions/token";
 import { TokenMetrics } from "./types";
 
-const BUFFER_INTERVAL = 1000;
-const MAX_TOKENS = 1000;
-const MAX_TRADES_PER_TOKEN = 5000;
+const BUFFER_INTERVAL = 0;
+const MAX_TOKENS = 10000;
+const MAX_TRADES_PER_TOKEN = 500000000;
 
 export function TokenScanner() {
   const [tokens, setTokens] = useState<TokenData[]>([]);
@@ -33,7 +33,7 @@ export function TokenScanner() {
   const pendingTokenUpdatesRef = useRef<Map<string, Partial<TokenData>>>(
     new Map()
   );
-  const pendingTradeUpdatesRef = useRef<Map<string, TradeEvent[]>>(new Map());
+
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const { data: solPrice = 0 } = useQuery({
@@ -89,11 +89,9 @@ export function TokenScanner() {
   }, []);
 
   const flushUpdates = useCallback(() => {
-    if (
-      pendingTokenUpdatesRef.current.size === 0 &&
-      pendingTradeUpdatesRef.current.size === 0
-    )
+    if (pendingTokenUpdatesRef.current.size === 0) {
       return;
+    }
 
     setTokens((prev) => {
       const updatedTokens = [...prev];
@@ -106,30 +104,17 @@ export function TokenScanner() {
       return updatedTokens;
     });
 
-    setTrades((prev) => {
-      const newTrades = new Map(prev);
-      pendingTradeUpdatesRef.current.forEach((tradeUpdates, mint) => {
-        const existingTrades = newTrades.get(mint) || [];
-        newTrades.set(
-          mint,
-          [...tradeUpdates, ...existingTrades].slice(0, MAX_TRADES_PER_TOKEN)
-        );
-      });
-      return newTrades;
-    });
-
     pendingTokenUpdatesRef.current.clear();
-    pendingTradeUpdatesRef.current.clear();
   }, []);
 
   const bufferUpdates = useCallback(() => {
-    if (updateTimeoutRef.current) {
-      clearTimeout(updateTimeoutRef.current);
+    if (!updateTimeoutRef.current) {
+      // Set a timeout if none exists
+      updateTimeoutRef.current = setTimeout(() => {
+        flushUpdates(); // Flush pending updates
+        updateTimeoutRef.current = null; // Reset the timeout reference
+      }, BUFFER_INTERVAL);
     }
-    updateTimeoutRef.current = setTimeout(() => {
-      flushUpdates();
-      updateTimeoutRef.current = null;
-    }, BUFFER_INTERVAL);
   }, [flushUpdates]);
 
   const handleNewToken = useCallback(
@@ -159,6 +144,7 @@ export function TokenScanner() {
       };
 
       setTokens((prev) => [newToken, ...prev].slice(0, MAX_TOKENS));
+
       initializeTokenMetrics(tokenEvent.mint, tokenEvent.traderPublicKey);
 
       if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -201,7 +187,12 @@ export function TokenScanner() {
       metrics.highPrice = Math.max(metrics.highPrice, metrics.lastPrice);
       metrics.lowPrice = Math.min(metrics.lowPrice, metrics.lastPrice);
       metrics.marketCapSol = trade.marketCapSol;
-
+      setTrades((prev) => {
+        const newTrades = new Map(prev);
+        const tokenTrades = newTrades.get(trade.mint) || [];
+        newTrades.set(trade.mint, [trade, ...tokenTrades].slice(0, 50));
+        return newTrades;
+      });
       pendingTokenUpdatesRef.current.set(trade.mint, {
         price: metrics.lastPrice,
         priceUsd: metrics.lastPrice * solPrice,
@@ -210,10 +201,6 @@ export function TokenScanner() {
         marketCap: trade.marketCapSol,
         holders: metrics.holders.size,
       });
-
-      const pendingTrades =
-        pendingTradeUpdatesRef.current.get(trade.mint) || [];
-      pendingTradeUpdatesRef.current.set(trade.mint, [trade, ...pendingTrades]);
 
       bufferUpdates();
     },

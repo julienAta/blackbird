@@ -23,6 +23,7 @@ import { ExternalLink } from "lucide-react";
 import { TokenData, TradeEvent, TokenMetrics } from "./types";
 import { useQuery } from "@tanstack/react-query";
 import { fetchSolPrice } from "@/app/actions/token";
+import { useEffect } from "react";
 
 interface TokenDetailsModalProps {
   token: TokenData;
