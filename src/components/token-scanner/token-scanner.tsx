@@ -93,23 +93,38 @@ export function TokenScanner() {
   }, []);
 
   const flushUpdates = useCallback(() => {
-    if (pendingTokenUpdatesRef.current.size === 0) {
-      return;
-    }
+    if (pendingTokenUpdatesRef.current.size === 0) return;
 
     setTokens((prev) => {
+      const now = Date.now();
       const updatedTokens = [...prev];
-      pendingTokenUpdatesRef.current.forEach((token, mint) => {
-        const index = updatedTokens.findIndex((t) => t.mint === mint);
-        if (index !== -1) {
-          updatedTokens[index] = { ...updatedTokens[index], ...token };
-        }
-      });
-      return updatedTokens;
+
+      // Apply pending updates and filter inactive tokens in one pass
+      return updatedTokens
+        .map((token) => {
+          const updates = pendingTokenUpdatesRef.current.get(token.mint);
+          if (updates) {
+            return { ...token, ...updates };
+          }
+          return token;
+        })
+        .filter((token) => {
+          const metrics = tokenMetricsRef.current.get(token.mint);
+          if (!metrics) return false;
+
+          const timeSinceCreated = (now - metrics.createdAt) / 1000 / 60; // minutes
+          const marketCap = token.marketCap * solPrice;
+
+          return (
+            timeSinceCreated < REMOVE_AFTER_MINUTES ||
+            metrics.holders.size >= MIN_HOLDERS_TO_KEEP ||
+            marketCap >= MIN_MARKET_CAP_TO_KEEP
+          );
+        });
     });
 
     pendingTokenUpdatesRef.current.clear();
-  }, []);
+  }, [solPrice]);
 
   const bufferUpdates = useCallback(() => {
     if (!updateTimeoutRef.current) {
@@ -334,30 +349,30 @@ export function TokenScanner() {
     };
   }, [cleanup]);
 
-  useEffect(() => {
-    const removeInactiveTokens = () => {
-      const now = Date.now();
-      setTokens((prevTokens) =>
-        prevTokens.filter((token) => {
-          const createdAt =
-            tokenMetricsRef.current.get(token.mint)?.createdAt || 0;
-          const timeSinceCreated = (now - createdAt) / 1000 / 60; // minutes
-          const numHolders =
-            tokenMetricsRef.current.get(token.mint)?.holders.size || 0;
-          const marketCap = token.marketCap * solPrice;
-          return (
-            timeSinceCreated < REMOVE_AFTER_MINUTES ||
-            numHolders >= MIN_HOLDERS_TO_KEEP ||
-            marketCap < MIN_MARKET_CAP_TO_KEEP
-          );
-        })
-      );
-      console.log("wiped tokens");
-    };
+  // useEffect(() => {
+  //   const removeInactiveTokens = () => {
+  //     const now = Date.now();
+  //     setTokens((prevTokens) =>
+  //       prevTokens.filter((token) => {
+  //         const createdAt =
+  //           tokenMetricsRef.current.get(token.mint)?.createdAt || 0;
+  //         const timeSinceCreated = (now - createdAt) / 1000 / 60; // minutes
+  //         const numHolders =
+  //           tokenMetricsRef.current.get(token.mint)?.holders.size || 0;
+  //         const marketCap = token.marketCap * solPrice;
+  //         return (
+  //           timeSinceCreated < REMOVE_AFTER_MINUTES ||
+  //           numHolders >= MIN_HOLDERS_TO_KEEP ||
+  //           marketCap < MIN_MARKET_CAP_TO_KEEP
+  //         );
+  //       })
+  //     );
+  //     console.log("wiped tokens");
+  //   };
 
-    const intervalId = setInterval(removeInactiveTokens, 60000); // Check every minute
-    return () => clearInterval(intervalId);
-  }, []);
+  //   const intervalId = setInterval(removeInactiveTokens, 60000); // Check every minute
+  //   return () => clearInterval(intervalId);
+  // }, []);
   const downloadTokensAsCSV = useCallback(() => {
     const csvData = Papa.unparse(tokens, {
       columns: [
