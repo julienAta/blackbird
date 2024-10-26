@@ -22,23 +22,25 @@ const MIN_MARKET_CAP_TO_KEEP = 10000; // Minimum market cap to keep a token in $
 
 export function TokenScanner() {
   const [tokens, setTokens] = useState<TokenData[]>([]);
-  const [selectedToken, setSelectedToken] = useState<TokenData | null>(null);
+  const [selectedToken, setSelectedToken] = useState<TokenData | undefined>(
+    undefined
+  );
   const [trades, setTrades] = useState<Map<string, TradeEvent[]>>(new Map());
   const [wsStatus, setWsStatus] = useState<
     "connecting" | "connected" | "disconnected"
   >("disconnected");
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<WebSocket | undefined>(undefined);
   const subscribedTokensRef = useRef<Set<string>>(new Set());
   const tokenMetricsRef = useRef<Map<string, TokenMetrics>>(new Map());
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const isConnectingRef = useRef<boolean>(false);
 
   const pendingTokenUpdatesRef = useRef<Map<string, Partial<TokenData>>>(
     new Map()
   );
 
-  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const updateTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   const { data: solPrice = 0 } = useQuery({
     queryKey: ["solPrice"],
@@ -49,15 +51,15 @@ export function TokenScanner() {
   const cleanup = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
+      reconnectTimeoutRef.current = undefined;
     }
     if (updateTimeoutRef.current) {
       clearTimeout(updateTimeoutRef.current);
-      updateTimeoutRef.current = null;
+      updateTimeoutRef.current = undefined;
     }
     if (wsRef.current) {
       wsRef.current.close();
-      wsRef.current = null;
+      wsRef.current = undefined;
     }
   }, []);
 
@@ -131,7 +133,7 @@ export function TokenScanner() {
       // Set a timeout if none exists
       updateTimeoutRef.current = setTimeout(() => {
         flushUpdates(); // Flush pending updates
-        updateTimeoutRef.current = null; // Reset the timeout reference
+        updateTimeoutRef.current = undefined; // Reset the timeout reference
       }, BUFFER_INTERVAL);
     }
   }, [flushUpdates]);
@@ -288,12 +290,12 @@ export function TokenScanner() {
         isConnectingRef.current = false;
         setWsStatus("disconnected");
 
-        if (wsRef.current !== null) {
+        if (wsRef.current !== undefined) {
           if (reconnectTimeoutRef.current) {
             clearTimeout(reconnectTimeoutRef.current);
           }
           reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectTimeoutRef.current = null;
+            reconnectTimeoutRef.current = undefined;
             if (!isConnectingRef.current && !wsRef.current) {
               connect();
             }
@@ -316,7 +318,7 @@ export function TokenScanner() {
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
+      reconnectTimeoutRef.current = undefined;
     }
 
     subscribedTokensRef.current.forEach((mint) => {
@@ -489,7 +491,7 @@ export function TokenScanner() {
           trades={trades.get(selectedToken.mint) || []}
           metrics={tokenMetricsRef.current.get(selectedToken.mint)}
           isOpen={!!selectedToken}
-          onClose={() => setSelectedToken(null)}
+          onClose={() => setSelectedToken(undefined)}
         />
       )}
     </>
