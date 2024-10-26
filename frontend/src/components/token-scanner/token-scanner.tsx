@@ -17,7 +17,7 @@ const BUFFER_INTERVAL = 500;
 const MAX_TOKENS = 10000;
 const MAX_TRADES_PER_TOKEN = 500000000;
 const MIN_HOLDERS_TO_KEEP = 30; // Minimum number of holders to keep a token
-const REMOVE_AFTER_MINUTES = 1; // Remove tokens with less than MIN_HOLDERS_TO_KEEP after this many minutes
+const REMOVE_AFTER_MINUTES = 10; // Remove tokens with less than MIN_HOLDERS_TO_KEEP after this many minutes
 const MIN_MARKET_CAP_TO_KEEP = 10000; // Minimum market cap to keep a token in $
 
 export function TokenScanner() {
@@ -25,6 +25,8 @@ export function TokenScanner() {
   const [selectedToken, setSelectedToken] = useState<TokenData | undefined>(
     undefined
   );
+  const [defaultSolPrice, setDefaultSolPrice] = useState<number>(160);
+
   const [trades, setTrades] = useState<Map<string, TradeEvent[]>>(new Map());
   const [wsStatus, setWsStatus] = useState<
     "connecting" | "connected" | "disconnected"
@@ -42,11 +44,17 @@ export function TokenScanner() {
 
   const updateTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
-  const { data: solPrice = 0 } = useQuery({
+  const { data: solPrice = defaultSolPrice } = useQuery({
     queryKey: ["solPrice"],
     queryFn: fetchSolPrice,
     refetchInterval: 60000,
   });
+
+  useEffect(() => {
+    if (solPrice) {
+      setDefaultSolPrice(solPrice);
+    }
+  }, [solPrice]);
 
   const cleanup = useCallback(() => {
     if (reconnectTimeoutRef.current) {

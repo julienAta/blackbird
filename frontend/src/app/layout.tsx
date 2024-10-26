@@ -42,6 +42,12 @@ export default function RootLayout({
           >
             Scanner
           </Link>
+          <Link
+            href="/trainer"
+            className="ml-4 text-primary hover:text-accent transition-colors"
+          >
+            Trainer
+          </Link>
         </nav>
         <main className="container mx-auto p-4">
           <Providers>{children}</Providers>
