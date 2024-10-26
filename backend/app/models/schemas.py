@@ -1,8 +1,8 @@
+# app/models/schemas.py
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 class Trade(BaseModel):
-    signature: str
     mint: str
     traderPublicKey: str
     txType: str
@@ -10,10 +10,19 @@ class Trade(BaseModel):
     vSolInBondingCurve: float
     vTokensInBondingCurve: float
     timestamp: int
+    marketCapSol: Optional[float] = None
+
+class TokenData(BaseModel):
+    mint: str
+    initialBuySol: float
+    initialBuyPercent: float
+    liquidity: float
+    marketCap: Optional[float] = None
 
 class PredictionResponse(BaseModel):
     isPromising: bool
     probability: float
 
-class ErrorResponse(BaseModel):
-    detail: str
+class PredictionRequest(BaseModel):
+    trades: List[Trade]
+    token: TokenData
