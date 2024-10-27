@@ -1,0 +1,15 @@
+{
+  "name": "blackbird",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm frontend",
+    "build": "pnpm --parallel run build",
+    "frontend": "cd frontend && pnpm dev",
+    "payment": "cd payment && go run cmd/server/main.go",
+    "backend": "cd backend && poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+    "dev:all": "concurrently \"pnpm frontend\" \"pnpm backend\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

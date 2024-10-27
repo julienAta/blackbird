@@ -45,6 +45,7 @@ export interface TradeEvent {
   vTokensInBondingCurve: number;
   timestamp: number;
   marketCapSol: number;
+  holdersCount?: number;
 }
 
 export interface TokenDetailsProps {
@@ -56,7 +57,10 @@ export interface TokenDetailsProps {
 
 // types.ts
 export interface TokenMetrics {
-  holders: Set<string>;
+  holders: Map<string, number>; // Track balance per holder
+  holdersByTime: {
+    [timestamp: number]: number;
+  };
   totalVolume: number; // Track total volume
   volumeByTime: {
     [timestamp: number]: number;

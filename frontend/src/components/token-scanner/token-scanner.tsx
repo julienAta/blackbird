@@ -144,6 +144,7 @@ export function TokenScanner() {
             vTokensInBondingCurve: trade.vTokensInBondingCurve,
             timestamp: trade.timestamp,
             marketCapSol: trade.marketCapSol,
+            holdersCount: trade.holdersCount,
           })),
           token: {
             mint: token.mint,
@@ -203,25 +204,27 @@ export function TokenScanner() {
     },
     [flushPredictions]
   );
-  const initializeTokenMetrics = useCallback(
-    (mint: string, initialHolder: string) => {
-      tokenMetricsRef.current.set(mint, {
-        holders: new Set([initialHolder]),
-        totalVolume: 0,
-        volumeByTime: {},
-        createdAt: Date.now(),
-        trades: 0,
-        buyCount: 0,
-        sellCount: 0,
-        uniqueTraders: new Set([initialHolder]),
-        lastPrice: 0,
-        highPrice: 0,
-        lowPrice: Infinity,
-        marketCapSol: 0,
-      });
-    },
-    []
-  );
+  const initializeTokenMetrics = (
+    mint: string,
+    initialHolder: string,
+    initialAmount: number
+  ) => {
+    tokenMetricsRef.current.set(mint, {
+      holders: new Map([[initialHolder, initialAmount]]),
+      holdersByTime: {},
+      totalVolume: 0,
+      volumeByTime: {},
+      createdAt: Date.now(),
+      trades: 0,
+      buyCount: 0,
+      sellCount: 0,
+      uniqueTraders: new Set([initialHolder]),
+      lastPrice: 0,
+      highPrice: 0,
+      lowPrice: Infinity,
+      marketCapSol: 0,
+    });
+  };
 
   const handleTokenSelect = useCallback((token: TokenData) => {
     setSelectedToken(token);
@@ -301,7 +304,11 @@ export function TokenScanner() {
       };
 
       setTokens((prev) => [newToken, ...prev].slice(0, MAX_TOKENS));
-      initializeTokenMetrics(tokenEvent.mint, tokenEvent.traderPublicKey);
+      initializeTokenMetrics(
+        tokenEvent.mint,
+        tokenEvent.traderPublicKey,
+        tokenEvent.initialBuy
+      );
 
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
@@ -321,8 +328,34 @@ export function TokenScanner() {
     (trade: TradeEvent) => {
       // First, update trades state independently
       setTrades((currentTrades) => {
+        const metrics = tokenMetricsRef.current.get(trade.mint);
+        let currentHolders = metrics?.holders || new Map();
+        const trader = trade.traderPublicKey;
+
+        // Calculate new balance after trade
+        const currentBalance = currentHolders.get(trader) || 0;
+        let newBalance = currentBalance;
+
+        if (trade.txType === "buy") {
+          newBalance = currentBalance + trade.tokenAmount;
+        } else if (trade.txType === "sell") {
+          newBalance = currentBalance - trade.tokenAmount;
+        }
+
+        // Update or remove holder based on balance
+        if (newBalance > 0) {
+          currentHolders.set(trader, newBalance);
+        } else {
+          currentHolders.delete(trader);
+        }
+
+        const updatedTrade = {
+          ...trade,
+          holdersCount: currentHolders.size,
+        };
+
         const existingTrades = currentTrades.get(trade.mint) || [];
-        const updatedTrades = [trade, ...existingTrades].slice(0, 50);
+        const updatedTrades = [updatedTrade, ...existingTrades].slice(0, 50);
         const newTrades = new Map(currentTrades);
         newTrades.set(trade.mint, updatedTrades);
 
@@ -355,23 +388,43 @@ export function TokenScanner() {
 
       let metrics = tokenMetricsRef.current.get(trade.mint);
       if (!metrics) {
-        initializeTokenMetrics(trade.mint, trade.traderPublicKey);
+        initializeTokenMetrics(
+          trade.mint,
+          trade.traderPublicKey,
+          trade.txType === "buy" ? trade.tokenAmount : 0
+        );
         metrics = tokenMetricsRef.current.get(trade.mint)!;
       }
+
+      // Update holder balances
+      const trader = trade.traderPublicKey;
+      const currentBalance = metrics.holders.get(trader) || 0;
+      let newBalance = currentBalance;
+
+      if (trade.txType === "buy") {
+        newBalance = currentBalance + trade.tokenAmount;
+        metrics.buyCount++;
+      } else if (trade.txType === "sell") {
+        newBalance = currentBalance - trade.tokenAmount;
+        metrics.sellCount++;
+      }
+
+      // Update or remove holder based on balance
+      if (newBalance > 0) {
+        metrics.holders.set(trader, newBalance);
+      } else {
+        metrics.holders.delete(trader);
+      }
+
+      // Record holders count at this timestamp
+      metrics.holdersByTime[trade.timestamp] = metrics.holders.size;
 
       const totalTradeSol = getTradeTotalSol(trade);
       metrics.totalVolume += totalTradeSol;
       metrics.volumeByTime[trade.timestamp] = metrics.totalVolume;
       metrics.trades++;
 
-      if (trade.txType === "buy") {
-        metrics.buyCount++;
-      } else {
-        metrics.sellCount++;
-      }
-
-      metrics.holders.add(trade.traderPublicKey);
-      metrics.uniqueTraders.add(trade.traderPublicKey);
+      metrics.uniqueTraders.add(trader);
       metrics.lastPrice =
         trade.vSolInBondingCurve / trade.vTokensInBondingCurve;
       metrics.highPrice = Math.max(metrics.highPrice, metrics.lastPrice);
@@ -557,6 +610,7 @@ export function TokenScanner() {
     const csvData = Papa.unparse(allTrades, {
       columns: [
         "mint",
+        "holdersCount",
         "traderPublicKey",
         "txType",
         "tokenAmount",

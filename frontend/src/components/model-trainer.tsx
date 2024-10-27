@@ -10,43 +10,75 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Upload, AlertCircle, CheckCircle2 } from "lucide-react";
 import Papa from "papaparse";
 import { trainModel } from "@/app/actions/train";
+import { TokenData, TradeEvent } from "@/components/token-scanner/types";
 
-interface TradeData {
-  mint: string;
-  traderPublicKey: string;
-  txType: string;
-  tokenAmount: number;
-  vSolInBondingCurve: number;
-  vTokensInBondingCurve: number;
-  timestamp: number;
-  marketCapSol: number;
-}
+// Helper function to track holder counts
+const processTradesWithHolders = (trades: any[]): TradeEvent[] => {
+  const holdersByMint = new Map<string, Map<string, number>>();
+  const processedTrades: TradeEvent[] = [];
 
-interface TokenData {
-  mint: string;
-  initialBuySol: number;
-  initialBuyPercent: number;
-  liquidity: number;
-  marketCap: number;
-}
-const formatTradeData = (trade: any) => ({
-  mint: String(trade.mint || ""),
-  traderPublicKey: String(trade.traderPublicKey || ""),
-  txType: String(trade.txType || ""),
-  tokenAmount: Number(trade.tokenAmount || 0),
-  vSolInBondingCurve: Number(trade.vSolInBondingCurve || 0),
-  vTokensInBondingCurve: Number(trade.vTokensInBondingCurve || 0),
-  timestamp: Number(trade.timestamp || 0),
-  marketCapSol: Number(trade.marketCapSol || 0),
-});
+  // Sort trades by timestamp
+  const sortedTrades = [...trades].sort((a, b) => a.timestamp - b.timestamp);
 
-const formatTokenData = (token: any) => ({
+  for (const trade of sortedTrades) {
+    const mint = trade.mint;
+    if (!holdersByMint.has(mint)) {
+      holdersByMint.set(mint, new Map());
+    }
+
+    const holders = holdersByMint.get(mint)!;
+    const trader = trade.traderPublicKey;
+    const currentBalance = holders.get(trader) || 0;
+    let newBalance = currentBalance;
+
+    if (trade.txType === "buy") {
+      newBalance = currentBalance + Number(trade.tokenAmount);
+    } else if (trade.txType === "sell") {
+      newBalance = currentBalance - Number(trade.tokenAmount);
+    }
+
+    // Update or remove holder based on balance
+    if (newBalance > 0) {
+      holders.set(trader, newBalance);
+    } else {
+      holders.delete(trader);
+    }
+
+    // Create processed trade with holder count
+    processedTrades.push({
+      mint: String(trade.mint),
+      traderPublicKey: String(trade.traderPublicKey),
+      txType: trade.txType as "buy" | "sell",
+      tokenAmount: Number(trade.tokenAmount),
+      vSolInBondingCurve: Number(trade.vSolInBondingCurve),
+      vTokensInBondingCurve: Number(trade.vTokensInBondingCurve),
+      timestamp: Number(trade.timestamp),
+      marketCapSol: Number(trade.marketCapSol),
+      holdersCount: holders.size,
+      ...trade,
+    });
+  }
+
+  return processedTrades;
+};
+
+const formatTokenData = (token: any): TokenData => ({
   mint: String(token.mint || ""),
+  name: String(token.name || ""),
+  symbol: String(token.symbol || ""),
+  price: Number(token.price || 0),
+  timestamp: Number(token.timestamp || 0),
+  creator: String(token.creator || ""),
+  marketCap: Number(token.marketCap || 0),
+  initialBuy: Number(token.initialBuy || 0),
   initialBuySol: Number(token.initialBuySol || 0),
   initialBuyPercent: Number(token.initialBuyPercent || 0),
+  totalSupply: Number(token.totalSupply || 0),
+  volume24h: Number(token.volume24h || 0),
+  holders: Number(token.holders || 1),
   liquidity: Number(token.liquidity || 0),
-  marketCap: Number(token.marketCap || 0),
 });
+
 export function ModelTrainer() {
   const [tradesFile, setTradesFile] = useState<File | null>(null);
   const [tokensFile, setTokensFile] = useState<File | null>(null);
@@ -64,7 +96,6 @@ export function ModelTrainer() {
         dynamicTyping: true,
         skipEmptyLines: true,
         transformHeader: (header) => {
-          // Transform headers to match exactly what backend expects
           const headerMap: { [key: string]: string } = {
             traderpublickey: "traderPublicKey",
             tokenamount: "tokenAmount",
@@ -78,15 +109,7 @@ export function ModelTrainer() {
           const normalizedHeader = header.toLowerCase().trim();
           return headerMap[normalizedHeader] || header;
         },
-        complete: (results) => {
-          const data = results.data;
-          console.log(`Parsed ${file.name}:`, {
-            headers: results.meta.fields,
-            rowCount: data.length,
-            sampleRow: data[0],
-          });
-          resolve(data);
-        },
+        complete: (results) => resolve(results.data),
         error: reject,
       });
     });
@@ -109,22 +132,25 @@ export function ModelTrainer() {
       const rawTokens = await parseCSV(tokensFile);
       setProgress(50);
 
-      // Format data
-      const trades = rawTrades.map(formatTradeData);
+      // Process trades to include holder counts
+      const processedTrades = processTradesWithHolders(rawTrades);
       const tokens = rawTokens.map(formatTokenData);
 
-      // Log formatted data
-      console.log("Formatted Data:", {
-        tradeSample: trades[0],
-        tokenSample: tokens[0],
-        tradeColumns: Object.keys(trades[0]),
-        tokenColumns: Object.keys(tokens[0]),
-      });
-
+      // Calculate stats
+      const stats = {
+        originalTrades: rawTrades.length,
+        originalTokens: rawTokens.length,
+        validTrades: processedTrades.length,
+        validTokens: tokens.length,
+        uniqueTradeMints: new Set(processedTrades.map((t) => t.mint)).size,
+        uniqueTokenMints: new Set(tokens.map((t) => t.mint)).size,
+        successfulTokens: tokens.filter((t) => t.marketCap >= 60).length,
+      };
+      setDataStats(stats);
       setProgress(70);
 
       // Train model
-      const result = await trainModel(trades, tokens);
+      const result = await trainModel(processedTrades, tokens);
 
       if (!result.success) {
         throw new Error(result.error);
@@ -132,7 +158,7 @@ export function ModelTrainer() {
 
       setStatus("success");
       setMessage(
-        `Model trained successfully with ${trades.length} trades and ${tokens.length} tokens!`
+        `Model trained successfully with ${processedTrades.length} trades and ${tokens.length} tokens!`
       );
       setProgress(100);
     } catch (error) {
@@ -140,24 +166,6 @@ export function ModelTrainer() {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Training failed");
     }
-  };
-  const parseFile = async (file: File): Promise<any[]> => {
-    return new Promise((resolve, reject) => {
-      Papa.parse(file, {
-        header: true,
-        dynamicTyping: true,
-        skipEmptyLines: true,
-        complete: (results) => {
-          console.log(`Parsed ${file.name}:`, {
-            headers: results.meta.fields,
-            firstRow: results.data[0],
-            rowCount: results.data.length,
-          });
-          resolve(results.data);
-        },
-        error: reject,
-      });
-    });
   };
 
   return (
@@ -168,6 +176,7 @@ export function ModelTrainer() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Rest of your UI remains the same */}
         <div className="grid gap-4">
           <div className="space-y-2">
             <label className="text-sm font-medium">Trades Dataset</label>
@@ -178,7 +187,7 @@ export function ModelTrainer() {
               className="cursor-pointer"
             />
             <p className="text-xs text-muted-foreground">
-              Columns: mint, traderPublicKey, txType, tokenAmount,
+              Required: mint, traderPublicKey, txType, tokenAmount,
               vSolInBondingCurve, vTokensInBondingCurve, timestamp, marketCapSol
             </p>
           </div>

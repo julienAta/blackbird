@@ -1,29 +1,10 @@
 // app/actions/train.ts
 "use server";
-
+import { TradeEvent, TokenData } from "@/components/token-scanner/types";
 const ML_SERVICE_URL =
   process.env.ML_SERVICE_URL || "http://localhost:8000/api";
 
-interface TradeData {
-  mint: string;
-  traderPublicKey: string;
-  txType: string;
-  tokenAmount: number;
-  vSolInBondingCurve: number;
-  vTokensInBondingCurve: number;
-  timestamp: number;
-  marketCapSol: number;
-}
-
-interface TokenData {
-  mint: string;
-  initialBuySol: number;
-  initialBuyPercent: number;
-  liquidity: number;
-  marketCap: number;
-}
-
-export async function trainModel(trades: TradeData[], tokens: TokenData[]) {
+export async function trainModel(trades: TradeEvent[], tokens: TokenData[]) {
   try {
     console.log("Training data sample:", {
       tradeSample: trades[0],

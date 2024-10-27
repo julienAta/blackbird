@@ -47,7 +47,7 @@ async def train_model(trades: List[Dict], tokens: List[Dict]):
         # Validate required columns
         required_trade_cols = [
             'mint', 'traderPublicKey', 'txType', 'tokenAmount',
-            'vSolInBondingCurve', 'vTokensInBondingCurve', 'timestamp'
+            'vSolInBondingCurve', 'vTokensInBondingCurve', 'timestamp',"holdersCount"
         ]
         required_token_cols = [
             'mint', 'initialBuySol', 'initialBuyPercent', 'liquidity', 'marketCap'
@@ -82,7 +82,11 @@ async def predict_token(trades: List[Trade], token: TokenData):
                 "txType": t.txType,
                 "vSolInBondingCurve": t.vSolInBondingCurve,
                 "marketCapSol": t.marketCapSol,
-                "timestamp": t.timestamp
+                "timestamp": t.timestamp,
+                "holdersCount": t.holdersCount,  # Add this
+                "mint": t.mint,  # Also need mint
+                "tokenAmount": t.tokenAmount,
+                "vTokensInBondingCurve": t.vTokensInBondingCurve
             } for t in trades
         ]
         

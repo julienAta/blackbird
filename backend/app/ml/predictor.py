@@ -46,19 +46,19 @@ class QuickTokenPredictor:
                 'buy_ratio_30s': 0, 'buy_ratio_1min': 0, 'buy_ratio_2min': 0, 'buy_ratio_5min': 0,
                 'mcap_growth_30s': 0, 'mcap_growth_1min': 0, 'mcap_growth_2min': 0, 'mcap_growth_5min': 0,
                 'unique_traders_30s': 0, 'unique_traders_1min': 0, 'unique_traders_2min': 0, 'unique_traders_5min': 0,
-                'buy_pressure_30s': 0, 'buy_pressure_1min': 0, 'buy_pressure_2min': 0, 'buy_pressure_5min': 0
+                'buy_pressure_30s': 0, 'buy_pressure_1min': 0, 'buy_pressure_2min': 0, 'buy_pressure_5min': 0,
+                # Add holder metrics
+                'holders_30s': 0, 'holders_1min': 0, 'holders_2min': 0, 'holders_5min': 0,
+                'holders_growth_30s': 0, 'holders_growth_1min': 0, 'holders_growth_2min': 0, 'holders_growth_5min': 0,
             }
             
             if len(trades_df) == 0:
                 return features
-            
-            print(f"\nProcessing {len(trades_df)} trades")
-            print("First trade:", trades_df.iloc[0].to_dict())
-            print("Last trade:", trades_df.iloc[-1].to_dict())
-            
+                
             trades_df['timestamp'] = pd.to_numeric(trades_df['timestamp'])
             trades_df = trades_df.sort_values('timestamp')
             start_time = trades_df['timestamp'].min()
+            initial_holders = trades_df.iloc[0]['holdersCount']
             
             # Process time windows
             for seconds, suffix in [(30, '30s'), (60, '1min'), (120, '2min'), (300, '5min')]:
@@ -68,12 +68,14 @@ class QuickTokenPredictor:
                 
                 if len(window) == 0:
                     continue
-                
-                print(f"\nWindow {suffix}:")
-                print(f"Trades in window: {len(window)}")
-                
+                    
                 features[f'trades_{suffix}'] = len(window)
                 features[f'unique_traders_{suffix}'] = window['traderPublicKey'].nunique()
+                
+                # Holder metrics
+                features[f'holders_{suffix}'] = window.iloc[-1]['holdersCount']
+                holders_growth = ((window.iloc[-1]['holdersCount'] - initial_holders) / initial_holders * 100) if initial_holders > 0 else 0
+                features[f'holders_growth_{suffix}'] = holders_growth
                 
                 buys = window[window['txType'] == 'buy']
                 features[f'buy_ratio_{suffix}'] = len(buys) / len(window) if len(window) > 0 else 0
@@ -87,10 +89,19 @@ class QuickTokenPredictor:
                     end_mcap = window.iloc[-1]['marketCapSol']
                     features[f'mcap_growth_{suffix}'] = ((end_mcap - start_mcap) / start_mcap * 100) if start_mcap > 0 else 0
                     
+                print(f"\nWindow {suffix}:")
+                print(f"Trades in window: {len(window)}")
+                print(f"Current holders: {features[f'holders_{suffix}']}")
+                print(f"Holders growth: {features[f'holders_growth_{suffix}']}%")
                 print(f"Buy ratio: {features[f'buy_ratio_{suffix}']:.2f}")
                 print(f"Growth: {features[f'mcap_growth_{suffix}']:.2f}%")
             
             return features
+            
+        except Exception as e:
+            print(f"Error extracting features: {str(e)}")
+            print(f"Trades DataFrame columns: {trades_df.columns.tolist()}")
+            raise
             
         except Exception as e:
             print(f"Error extracting features: {str(e)}")
