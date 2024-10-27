@@ -1,9 +1,10 @@
 "use client";
+
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Download, Power, Trash2 } from "lucide-react";
+import { Download, Power, Trash2, Brain } from "lucide-react";
 import { DataTable } from "./data-table";
 import { TokenDetailsModal } from "./token-details-modal";
 import { columns } from "./columns";
@@ -12,13 +13,47 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchSolPrice } from "@/app/actions/token";
 import { TokenMetrics } from "./types";
 import Papa from "papaparse";
+import { toast } from "@/hooks/use-toast";
 
 const BUFFER_INTERVAL = 500;
 const MAX_TOKENS = 10000;
 const MAX_TRADES_PER_TOKEN = 500000000;
-const MIN_HOLDERS_TO_KEEP = 30; // Minimum number of holders to keep a token
-const REMOVE_AFTER_MINUTES = 10; // Remove tokens with less than MIN_HOLDERS_TO_KEEP after this many minutes
-const MIN_MARKET_CAP_TO_KEEP = 10000; // Minimum market cap to keep a token in $
+const MIN_HOLDERS_TO_KEEP = 30;
+const REMOVE_AFTER_MINUTES = 5;
+const MIN_MARKET_CAP_TO_KEEP = 70;
+const MIN_TRADES_FOR_PREDICTION = 3;
+const PREDICTION_WINDOW_MINUTES = 10;
+
+async function predictToken(trades: TradeEvent[], token: TokenData) {
+  try {
+    const response = await fetch("http://localhost:8000/api/predict", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        trades,
+        token: {
+          mint: token.mint,
+          initialBuySol: token.initialBuySol,
+          initialBuyPercent: token.initialBuyPercent,
+          liquidity: token.liquidity,
+          marketCap: token.marketCap,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Prediction failed");
+    }
+
+    const prediction = await response.json();
+    return prediction;
+  } catch (error) {
+    console.error("Prediction error:", error);
+    return null;
+  }
+}
 
 export function TokenScanner() {
   const [tokens, setTokens] = useState<TokenData[]>([]);
@@ -26,24 +61,27 @@ export function TokenScanner() {
     undefined
   );
   const [defaultSolPrice, setDefaultSolPrice] = useState<number>(160);
-
   const [trades, setTrades] = useState<Map<string, TradeEvent[]>>(new Map());
   const [wsStatus, setWsStatus] = useState<
     "connecting" | "connected" | "disconnected"
   >("disconnected");
+  const [predictions, setPredictions] = useState<
+    Map<string, { isPromising: boolean; probability: number }>
+  >(new Map());
 
   const wsRef = useRef<WebSocket | undefined>(undefined);
   const subscribedTokensRef = useRef<Set<string>>(new Set());
   const tokenMetricsRef = useRef<Map<string, TokenMetrics>>(new Map());
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const isConnectingRef = useRef<boolean>(false);
-
   const pendingTokenUpdatesRef = useRef<Map<string, Partial<TokenData>>>(
     new Map()
   );
-
   const updateTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
-
+  const pendingPredictionsRef = useRef<
+    Map<string, { token: TokenData; trades: TradeEvent[] }>
+  >(new Map());
+  const predictionTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const { data: solPrice = defaultSolPrice } = useQuery({
     queryKey: ["solPrice"],
     queryFn: fetchSolPrice,
@@ -65,12 +103,106 @@ export function TokenScanner() {
       clearTimeout(updateTimeoutRef.current);
       updateTimeoutRef.current = undefined;
     }
+    if (predictionTimeoutRef.current) {
+      clearTimeout(predictionTimeoutRef.current);
+      predictionTimeoutRef.current = undefined;
+    }
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = undefined;
     }
   }, []);
 
+  const checkTokenPotential = useCallback(
+    async (token: TokenData, tokenTrades: TradeEvent[]) => {
+      if (tokenTrades.length < MIN_TRADES_FOR_PREDICTION) {
+        console.log(
+          `Skipping prediction for ${token.name} - not enough trades (${tokenTrades.length})`
+        );
+        return;
+      }
+
+      bufferPrediction(token, tokenTrades);
+    },
+    []
+  );
+  const flushPredictions = useCallback(async () => {
+    if (pendingPredictionsRef.current.size === 0) return;
+
+    const predictions = pendingPredictionsRef.current;
+    pendingPredictionsRef.current = new Map();
+
+    for (const [mint, { token, trades }] of predictions) {
+      try {
+        const requestData = {
+          trades: trades.map((trade) => ({
+            mint: trade.mint,
+            traderPublicKey: trade.traderPublicKey,
+            txType: trade.txType,
+            tokenAmount: trade.tokenAmount,
+            vSolInBondingCurve: trade.vSolInBondingCurve,
+            vTokensInBondingCurve: trade.vTokensInBondingCurve,
+            timestamp: trade.timestamp,
+            marketCapSol: trade.marketCapSol,
+          })),
+          token: {
+            mint: token.mint,
+            initialBuySol: token.initialBuySol,
+            initialBuyPercent: token.initialBuyPercent,
+            liquidity: token.liquidity,
+            marketCap: token.marketCap,
+          },
+        };
+
+        const response = await fetch("http://localhost:8000/api/predict", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(requestData),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Prediction failed: ${JSON.stringify(errorData)}`);
+        }
+
+        const prediction = await response.json();
+        setPredictions((prev) => {
+          const newPredictions = new Map(prev);
+          newPredictions.set(mint, prediction);
+          return newPredictions;
+        });
+
+        if (prediction.probability > 0.8) {
+          console.log("🚀 High potential token detected:", token.name);
+          toast({
+            title: "High Potential Token! 🚀",
+            description: `${token.name} (${(
+              prediction.probability * 100
+            ).toFixed(1)}%)`,
+          });
+        }
+      } catch (error) {
+        console.error(`Prediction error for ${token.name}:`, error);
+      }
+    }
+  }, []);
+
+  // Add this function with other utility functions
+  const bufferPrediction = useCallback(
+    (token: TokenData, trades: TradeEvent[]) => {
+      pendingPredictionsRef.current.set(token.mint, { token, trades });
+
+      if (!predictionTimeoutRef.current) {
+        predictionTimeoutRef.current = setTimeout(() => {
+          flushPredictions();
+          predictionTimeoutRef.current = undefined;
+        }, BUFFER_INTERVAL);
+      }
+    },
+    [flushPredictions]
+  );
   const initializeTokenMetrics = useCallback(
     (mint: string, initialHolder: string) => {
       tokenMetricsRef.current.set(mint, {
@@ -109,7 +241,6 @@ export function TokenScanner() {
       const now = Date.now();
       const updatedTokens = [...prev];
 
-      // Apply pending updates and filter inactive tokens in one pass
       return updatedTokens
         .map((token) => {
           const updates = pendingTokenUpdatesRef.current.get(token.mint);
@@ -122,26 +253,23 @@ export function TokenScanner() {
           const metrics = tokenMetricsRef.current.get(token.mint);
           if (!metrics) return false;
 
-          const timeSinceCreated = (now - metrics.createdAt) / 1000 / 60; // minutes
-          const marketCap = token.marketCap * solPrice;
-
+          const timeSinceCreated = (now - metrics.createdAt) / 1000 / 60;
           return (
             timeSinceCreated < REMOVE_AFTER_MINUTES ||
             metrics.holders.size >= MIN_HOLDERS_TO_KEEP ||
-            marketCap >= MIN_MARKET_CAP_TO_KEEP
+            token.marketCap >= MIN_MARKET_CAP_TO_KEEP
           );
         });
     });
 
     pendingTokenUpdatesRef.current.clear();
-  }, [solPrice]);
+  }, []);
 
   const bufferUpdates = useCallback(() => {
     if (!updateTimeoutRef.current) {
-      // Set a timeout if none exists
       updateTimeoutRef.current = setTimeout(() => {
-        flushUpdates(); // Flush pending updates
-        updateTimeoutRef.current = undefined; // Reset the timeout reference
+        flushUpdates();
+        updateTimeoutRef.current = undefined;
       }, BUFFER_INTERVAL);
     }
   }, [flushUpdates]);
@@ -173,7 +301,6 @@ export function TokenScanner() {
       };
 
       setTokens((prev) => [newToken, ...prev].slice(0, MAX_TOKENS));
-
       initializeTokenMetrics(tokenEvent.mint, tokenEvent.traderPublicKey);
 
       if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -192,6 +319,40 @@ export function TokenScanner() {
 
   const updateTokenMetrics = useCallback(
     (trade: TradeEvent) => {
+      // First, update trades state independently
+      setTrades((currentTrades) => {
+        const existingTrades = currentTrades.get(trade.mint) || [];
+        const updatedTrades = [trade, ...existingTrades].slice(0, 50);
+        const newTrades = new Map(currentTrades);
+        newTrades.set(trade.mint, updatedTrades);
+
+        // Check potential after updating trades
+        setTokens((currentTokens) => {
+          const token = currentTokens.find((t) => t.mint === trade.mint);
+          if (token) {
+            const metrics = tokenMetricsRef.current.get(trade.mint);
+            if (metrics) {
+              const timeSinceCreation = Date.now() - metrics.createdAt;
+              const isEarlyPhase =
+                timeSinceCreation < PREDICTION_WINDOW_MINUTES * 60 * 1000;
+
+              if (
+                isEarlyPhase &&
+                updatedTrades.length >= MIN_TRADES_FOR_PREDICTION
+              ) {
+                console.log(
+                  `Checking potential for ${token.name} with ${updatedTrades.length} trades`
+                );
+                checkTokenPotential(token, updatedTrades);
+              }
+            }
+          }
+          return currentTokens;
+        });
+
+        return newTrades;
+      });
+
       let metrics = tokenMetricsRef.current.get(trade.mint);
       if (!metrics) {
         initializeTokenMetrics(trade.mint, trade.traderPublicKey);
@@ -199,10 +360,10 @@ export function TokenScanner() {
       }
 
       const totalTradeSol = getTradeTotalSol(trade);
-
       metrics.totalVolume += totalTradeSol;
       metrics.volumeByTime[trade.timestamp] = metrics.totalVolume;
       metrics.trades++;
+
       if (trade.txType === "buy") {
         metrics.buyCount++;
       } else {
@@ -216,12 +377,7 @@ export function TokenScanner() {
       metrics.highPrice = Math.max(metrics.highPrice, metrics.lastPrice);
       metrics.lowPrice = Math.min(metrics.lowPrice, metrics.lastPrice);
       metrics.marketCapSol = trade.marketCapSol;
-      setTrades((prev) => {
-        const newTrades = new Map(prev);
-        const tokenTrades = newTrades.get(trade.mint) || [];
-        newTrades.set(trade.mint, [trade, ...tokenTrades].slice(0, 50));
-        return newTrades;
-      });
+
       pendingTokenUpdatesRef.current.set(trade.mint, {
         price: metrics.lastPrice,
         priceUsd: metrics.lastPrice * solPrice,
@@ -233,9 +389,14 @@ export function TokenScanner() {
 
       bufferUpdates();
     },
-    [solPrice, getTradeTotalSol, initializeTokenMetrics, bufferUpdates]
+    [
+      solPrice,
+      getTradeTotalSol,
+      initializeTokenMetrics,
+      bufferUpdates,
+      checkTokenPotential,
+    ]
   );
-
   const connect = useCallback(() => {
     if (wsRef.current || isConnectingRef.current) {
       console.log("Connection already exists or is in progress");
@@ -359,30 +520,6 @@ export function TokenScanner() {
     };
   }, [cleanup]);
 
-  // useEffect(() => {
-  //   const removeInactiveTokens = () => {
-  //     const now = Date.now();
-  //     setTokens((prevTokens) =>
-  //       prevTokens.filter((token) => {
-  //         const createdAt =
-  //           tokenMetricsRef.current.get(token.mint)?.createdAt || 0;
-  //         const timeSinceCreated = (now - createdAt) / 1000 / 60; // minutes
-  //         const numHolders =
-  //           tokenMetricsRef.current.get(token.mint)?.holders.size || 0;
-  //         const marketCap = token.marketCap * solPrice;
-  //         return (
-  //           timeSinceCreated < REMOVE_AFTER_MINUTES ||
-  //           numHolders >= MIN_HOLDERS_TO_KEEP ||
-  //           marketCap < MIN_MARKET_CAP_TO_KEEP
-  //         );
-  //       })
-  //     );
-  //     console.log("wiped tokens");
-  //   };
-
-  //   const intervalId = setInterval(removeInactiveTokens, 60000); // Check every minute
-  //   return () => clearInterval(intervalId);
-  // }, []);
   const downloadTokensAsCSV = useCallback(() => {
     const csvData = Papa.unparse(tokens, {
       columns: [
@@ -439,6 +576,30 @@ export function TokenScanner() {
     document.body.removeChild(link);
   }, [trades]);
 
+  const columnsWithPrediction = [
+    ...columns,
+    {
+      id: "prediction",
+      header: "ML Score",
+      cell: ({ row }: any) => {
+        const prediction = predictions.get(row.original.mint);
+        if (!prediction) return null;
+
+        return (
+          <div className="text-right">
+            <Badge
+              className={
+                prediction.probability > 0.8 ? "animate-pulse bg-green-500" : ""
+              }
+            >
+              {(prediction.probability * 100).toFixed(1)}%
+            </Badge>
+          </div>
+        );
+      },
+    },
+  ];
+
   return (
     <>
       <Card className="w-full h-full">
@@ -489,7 +650,7 @@ export function TokenScanner() {
           </div>
         </CardHeader>
         <CardContent>
-          <DataTable columns={columns} data={tokens} />
+          <DataTable columns={columnsWithPrediction} data={tokens} />
         </CardContent>
       </Card>
 
@@ -498,6 +659,7 @@ export function TokenScanner() {
           token={selectedToken}
           trades={trades.get(selectedToken.mint) || []}
           metrics={tokenMetricsRef.current.get(selectedToken.mint)}
+          prediction={predictions.get(selectedToken.mint)}
           isOpen={!!selectedToken}
           onClose={() => setSelectedToken(undefined)}
         />

@@ -10,7 +10,6 @@ router = APIRouter(tags=["predictions"])
 predictor = QuickTokenPredictor()
 
 def validate_dataframe(df: pd.DataFrame, required_cols: List[str], name: str) -> None:
-    """Validate DataFrame has required columns"""
     print(f"\nValidating {name} DataFrame:")
     print(f"Available columns: {df.columns.tolist()}")
     print(f"Required columns: {required_cols}")
@@ -76,12 +75,31 @@ async def predict_token(trades: List[Trade], token: TokenData):
         if not trades:
             raise HTTPException(status_code=400, detail="No trades provided")
         
-        token_dict = token.dict()
-        is_promising, probability = predictor.predict(trades, token_dict)
+        # Convert Trade objects to dictionaries
+        trades_list = [
+            {
+                "traderPublicKey": t.traderPublicKey,
+                "txType": t.txType,
+                "vSolInBondingCurve": t.vSolInBondingCurve,
+                "marketCapSol": t.marketCapSol,
+                "timestamp": t.timestamp
+            } for t in trades
+        ]
+        
+        token_dict = {
+            "mint": token.mint,
+            "initialBuySol": token.initialBuySol,
+            "initialBuyPercent": token.initialBuyPercent,
+            "liquidity": token.liquidity,
+            "marketCap": token.marketCap
+        }
+        
+        is_promising, probability, analysis = predictor.predict(trades_list, token_dict)
         
         return PredictionResponse(
             isPromising=is_promising,
-            probability=probability
+            probability=probability,
+            analysis=analysis
         )
     except Exception as e:
         print("Prediction error:", str(e))
