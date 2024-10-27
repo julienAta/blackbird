@@ -1,6 +1,6 @@
 # app/models/schemas.py
 from pydantic import BaseModel
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List,Union, Any
 
 class Trade(BaseModel):
     mint: str
@@ -11,6 +11,7 @@ class Trade(BaseModel):
     vTokensInBondingCurve: float
     timestamp: int
     marketCapSol: float
+    holdersCount: int
 
 class TokenData(BaseModel):
     mint: str
@@ -19,10 +20,14 @@ class TokenData(BaseModel):
     liquidity: float
     marketCap: float
 
+class Analysis(BaseModel):
+    early_signs: Dict[str, Union[float, int]]
+    feature_values: Dict[str, float]
+
 class PredictionResponse(BaseModel):
     isPromising: bool
     probability: float
-    analysis: Dict[str, Any]
+    analysis: Analysis
 class PredictionRequest(BaseModel):
     trades: List[Trade]
     token: TokenData

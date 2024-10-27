@@ -1,7 +1,7 @@
 # app/api/endpoints/predict.py
 from fastapi import APIRouter, HTTPException
 from typing import List, Dict
-from app.models.schemas import Trade, PredictionResponse, TokenData
+from app.models.schemas import Trade, PredictionResponse, TokenData, Analysis  # Import Analysis from schemas
 from app.ml.predictor import QuickTokenPredictor
 import pandas as pd
 import traceback
@@ -69,24 +69,24 @@ async def train_model(trades: List[Dict], tokens: List[Dict]):
             status_code=500,
             detail=f"Training failed: {str(e)}"
         )
+    
 @router.post("/predict", response_model=PredictionResponse)
 async def predict_token(trades: List[Trade], token: TokenData):
     try:
         if not trades:
             raise HTTPException(status_code=400, detail="No trades provided")
         
-        # Convert Trade objects to dictionaries
         trades_list = [
             {
+                "mint": t.mint,
                 "traderPublicKey": t.traderPublicKey,
                 "txType": t.txType,
-                "vSolInBondingCurve": t.vSolInBondingCurve,
-                "marketCapSol": t.marketCapSol,
-                "timestamp": t.timestamp,
-                "holdersCount": t.holdersCount,  # Add this
-                "mint": t.mint,  # Also need mint
                 "tokenAmount": t.tokenAmount,
-                "vTokensInBondingCurve": t.vTokensInBondingCurve
+                "vSolInBondingCurve": t.vSolInBondingCurve,
+                "vTokensInBondingCurve": t.vTokensInBondingCurve,
+                "timestamp": t.timestamp,
+                "marketCapSol": t.marketCapSol,
+                "holdersCount": t.holdersCount
             } for t in trades
         ]
         
@@ -98,13 +98,23 @@ async def predict_token(trades: List[Trade], token: TokenData):
             "marketCap": token.marketCap
         }
         
-        is_promising, probability, analysis = predictor.predict(trades_list, token_dict)
+        is_promising, probability, raw_analysis = predictor.predict(trades_list, token_dict)
         
-        return PredictionResponse(
+        # Create proper Analysis instance
+        analysis = Analysis(
+            early_signs=raw_analysis["early_signs"],
+            feature_values=raw_analysis["feature_values"]
+        )
+        
+        # Create PredictionResponse
+        response = PredictionResponse(
             isPromising=is_promising,
-            probability=probability,
+            probability=float(probability),
             analysis=analysis
         )
+        
+        return response
+        
     except Exception as e:
         print("Prediction error:", str(e))
         print("Traceback:", traceback.format_exc())
