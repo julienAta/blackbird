@@ -247,11 +247,20 @@ class QuickTokenPredictor:
             return self
     
     def save(self, name: str = None):
-            """Save model and training state"""
+        """Save model and training state"""
+        try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = name or f"quick_pattern_model_{timestamp}.joblib"
             path = os.path.join(self.model_dir, filename)
             
+            # Ensure the directory exists
+            os.makedirs(self.model_dir, exist_ok=True)
+            
+            # Validate path
+            abs_path = os.path.abspath(path)
+            if not abs_path.startswith(os.path.abspath(self.model_dir)):
+                raise ValueError("Invalid save path")
+                
             state = {
                 'model': self.model,
                 'scaler': self.scaler,
@@ -261,9 +270,21 @@ class QuickTokenPredictor:
                 'timestamp': timestamp
             }
             
-            joblib.dump(state, path)
+            # Save to a temporary file first
+            temp_path = path + '.tmp'
+            joblib.dump(state, temp_path)
+            
+            # If successful, rename to final path
+            os.replace(temp_path, path)
+            
             print(f"\nModel saved to: {path}")
             return path
+            
+        except Exception as e:
+            print(f"Error saving model: {str(e)}")
+            print("Error type:", type(e))
+            print("Traceback:", traceback.format_exc())
+            raise
     def predict(self, trades: List[Dict], token_data: Dict) -> Tuple[bool, float, Dict]:
         try:
             # Debug: Check if model is loaded

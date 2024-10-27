@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchSolPrice } from "@/app/actions/token";
 import { TokenMetrics } from "./types";
 import Papa from "papaparse";
-import { toast } from "@/hooks/use-toast";
+import { useToast } from "@/hooks/use-toast";
 
 const BUFFER_INTERVAL = 500;
 const MAX_TOKENS = 10000;
@@ -23,38 +23,38 @@ const REMOVE_AFTER_MINUTES = 5;
 const MIN_MARKET_CAP_TO_KEEP = 70;
 const MIN_TRADES_FOR_PREDICTION = 3;
 const PREDICTION_WINDOW_MINUTES = 10;
-
-async function predictToken(trades: TradeEvent[], token: TokenData) {
-  try {
-    const response = await fetch("http://localhost:8000/api/predict", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        trades,
-        token: {
-          mint: token.mint,
-          initialBuySol: token.initialBuySol,
-          initialBuyPercent: token.initialBuyPercent,
-          liquidity: token.liquidity,
-          marketCap: token.marketCap,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error("Prediction failed");
-    }
-
-    const prediction = await response.json();
-    return prediction;
-  } catch (error) {
-    console.error("Prediction error:", error);
-    return null;
-  }
+interface FlaggedToken {
+  mint: string;
+  name: string;
+  symbol: string;
+  marketCapAtFlag: number;
+  highestMarketCap: number;
+  currentMarketCap: number;
+  percentageFromFlag: number;
+  bestPercentage: number; // Best performance reached
+  timestamp: number;
 }
 
+const writeToLogFile = async (content: string, mint: string) => {
+  try {
+    // Convert the current date to YYYY-MM-DD format for the filename
+    const today = new Date().toISOString().split("T")[0];
+    const filename = `high_potential_tokens_${today}_${mint}.txt`;
+    const blob = new Blob([content], { type: "text/plain" });
+
+    // Save the file
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error("Error writing to log file:", error);
+  }
+};
 export function TokenScanner() {
   const [tokens, setTokens] = useState<TokenData[]>([]);
   const [selectedToken, setSelectedToken] = useState<TokenData | undefined>(
@@ -68,7 +68,12 @@ export function TokenScanner() {
   const [predictions, setPredictions] = useState<
     Map<string, { isPromising: boolean; probability: number }>
   >(new Map());
+  const [flaggedTokens] = useState<Set<string>>(new Set());
+  const [flaggedTokensMetrics, setFlaggedTokensMetrics] = useState<
+    Map<string, FlaggedToken>
+  >(new Map());
 
+  const { toast } = useToast();
   const wsRef = useRef<WebSocket | undefined>(undefined);
   const subscribedTokensRef = useRef<Set<string>>(new Set());
   const tokenMetricsRef = useRef<Map<string, TokenMetrics>>(new Map());
@@ -82,6 +87,8 @@ export function TokenScanner() {
     Map<string, { token: TokenData; trades: TradeEvent[] }>
   >(new Map());
   const predictionTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
+  const flaggedTokensRef = useRef<Set<string>>(new Set());
+
   const { data: solPrice = defaultSolPrice } = useQuery({
     queryKey: ["solPrice"],
     queryFn: fetchSolPrice,
@@ -134,6 +141,11 @@ export function TokenScanner() {
 
     for (const [mint, { token, trades }] of predictions) {
       try {
+        // Skip if already flagged
+        if (flaggedTokensRef.current.has(mint)) {
+          continue;
+        }
+
         const requestData = {
           trades: trades.map((trade) => ({
             mint: trade.mint,
@@ -157,9 +169,7 @@ export function TokenScanner() {
 
         const response = await fetch("http://localhost:8000/api/predict", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(requestData),
         });
 
@@ -175,21 +185,89 @@ export function TokenScanner() {
           return newPredictions;
         });
 
-        if (prediction.probability > 0.8) {
-          console.log("🚀 High potential token detected:", token.name);
+        // Log high potential tokens
+        if (
+          (prediction.probability =
+            1 && token.marketCap < 150 && token.holders > 20)
+        ) {
+          // Skip if already logged
+          if (flaggedTokensRef.current.has(mint)) continue;
+
+          // Add to flagged tokens set
+          flaggedTokensRef.current.add(mint);
+          setFlaggedTokensMetrics((prev) => {
+            const newMetrics = new Map(prev);
+            newMetrics.set(mint, {
+              mint,
+              name: token.name,
+              symbol: token.symbol,
+              marketCapAtFlag: token.marketCap,
+              highestMarketCap: token.marketCap,
+              currentMarketCap: token.marketCap,
+              percentageFromFlag: 0,
+              timestamp: Date.now(),
+              bestPercentage: 0,
+            });
+            return newMetrics;
+          });
+          const metrics = tokenMetricsRef.current.get(mint);
+          const latestTrade = trades[0];
+          const timestamp = new Date().toLocaleString();
+
+          const logContent = [
+            `🚀 High Potential Token Detected! (${timestamp})`,
+            "-----------------------------------",
+            `Name: ${token.name} (${token.symbol})`,
+            `Mint: ${token.mint}`,
+            `Prediction Score: ${(prediction.probability * 100).toFixed(1)}%`,
+            "",
+            "Token Metrics:",
+            `- Market Cap: ${token.marketCap.toFixed(2)} SOL / ${(
+              token.marketCap * solPrice
+            ).toFixed(2)} USD`,
+            `- Current Price: ${(
+              latestTrade.vSolInBondingCurve / latestTrade.vTokensInBondingCurve
+            ).toFixed(8)} SOL`,
+            `- Holders: ${metrics?.holders.size || 0}`,
+            `- Volume: ${metrics?.totalVolume.toFixed(2) || 0} SOL`,
+            `- Liquidity: ${token.liquidity.toFixed(2)} SOL`,
+            "",
+            "Initial Stats:",
+            `- Initial Buy: ${token.initialBuySol.toFixed(
+              2
+            )} SOL (${token.initialBuyPercent.toFixed(2)}%)`,
+            "",
+            "Trading Activity:",
+            `- Total Trades: ${metrics?.trades || 0}`,
+            `- Buy Count: ${metrics?.buyCount || 0}`,
+            `- Sell Count: ${metrics?.sellCount || 0}`,
+            `- Unique Traders: ${metrics?.uniqueTraders.size || 0}`,
+            "",
+            "Early Signs:",
+            ...Object.entries(prediction.analysis?.early_signs || {}).map(
+              ([key, value]) =>
+                `- ${key}: ${
+                  typeof value === "number" ? value.toFixed(2) : value
+                }`
+            ),
+            "-----------------------------------",
+          ].join("\n");
+
+          // Write to individual log file with mint in filename
+
+          // Show toast notification
           toast({
-            title: "High Potential Token! 🚀",
+            title: "🚀 High Potential Token!",
             description: `${token.name} (${(
               prediction.probability * 100
-            ).toFixed(1)}%)`,
+            ).toFixed(1)}%) - MCap: ${token.marketCap.toFixed(2)} SOL`,
           });
         }
       } catch (error) {
         console.error(`Prediction error for ${token.name}:`, error);
       }
     }
-  }, []);
-
+  }, [solPrice, toast]);
   // Add this function with other utility functions
   const bufferPrediction = useCallback(
     (token: TokenData, trades: TradeEvent[]) => {
@@ -440,6 +518,40 @@ export function TokenScanner() {
         holders: metrics.holders.size,
       });
 
+      if (flaggedTokensRef.current.has(trade.mint)) {
+        setFlaggedTokensMetrics((prev) => {
+          const newMetrics = new Map(prev);
+          const flaggedToken = newMetrics.get(trade.mint);
+
+          if (flaggedToken) {
+            const currentMarketCap = trade.marketCapSol;
+            const highestMarketCap = Math.max(
+              flaggedToken.highestMarketCap,
+              currentMarketCap
+            );
+
+            // Calculate percentages
+            const percentageFromFlag =
+              ((currentMarketCap - flaggedToken.marketCapAtFlag) /
+                flaggedToken.marketCapAtFlag) *
+              100;
+            const bestPercentage =
+              ((highestMarketCap - flaggedToken.marketCapAtFlag) /
+                flaggedToken.marketCapAtFlag) *
+              100;
+
+            newMetrics.set(trade.mint, {
+              ...flaggedToken,
+              highestMarketCap,
+              currentMarketCap,
+              percentageFromFlag,
+              bestPercentage,
+            });
+          }
+          return newMetrics;
+        });
+      }
+
       bufferUpdates();
     },
     [
@@ -565,8 +677,8 @@ export function TokenScanner() {
     disconnect();
     setTokens([]);
     setTrades(new Map());
+    flaggedTokensRef.current.clear(); // Clear flagged tokens when clearing all data
   }, [disconnect]);
-
   useEffect(() => {
     return () => {
       cleanup();
@@ -705,6 +817,96 @@ export function TokenScanner() {
         </CardHeader>
         <CardContent>
           <DataTable columns={columnsWithPrediction} data={tokens} />
+          <div>
+            {flaggedTokensMetrics.size > 0 && (
+              <Card className="mt-4">
+                <CardHeader>
+                  <CardTitle>Flagged Tokens Performance</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-4">
+                    <div className="grid grid-cols-8 font-semibold text-sm">
+                      <div>Token</div>
+                      <div className="text-right">Flag MCap</div>
+                      <div className="text-right">Current MCap</div>
+                      <div className="text-right">Highest MCap</div>
+                      <div className="text-right">% From Flag</div>
+                      <div className="text-right">Best %</div>{" "}
+                      {/* Changed column */}
+                      <div className="text-right">Age</div>
+                      <div className="text-right">Status</div>
+                    </div>
+                    {Array.from(flaggedTokensMetrics.values())
+                      .sort((a, b) => b.timestamp - a.timestamp)
+                      .map((token) => {
+                        const ageInMinutes = Math.floor(
+                          (Date.now() - token.timestamp) / (1000 * 60)
+                        );
+                        const isProfit = token.percentageFromFlag > 0;
+                        const isATH =
+                          token.currentMarketCap === token.highestMarketCap;
+
+                        return (
+                          <div
+                            key={token.mint}
+                            className="grid grid-cols-8 text-sm border-t py-2"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span>{token.name}</span>
+                              <Badge variant="outline">{token.symbol}</Badge>
+                            </div>
+                            <div className="text-right">
+                              {token.marketCapAtFlag.toFixed(2)} SOL
+                            </div>
+                            <div className="text-right">
+                              {token.currentMarketCap.toFixed(2)} SOL
+                            </div>
+                            <div className="text-right">
+                              {token.highestMarketCap.toFixed(2)} SOL
+                            </div>
+                            <div
+                              className={`text-right ${
+                                isProfit ? "text-green-500" : "text-red-500"
+                              }`}
+                            >
+                              {token.percentageFromFlag > 0 ? "+" : ""}
+                              {token.percentageFromFlag.toFixed(2)}%
+                            </div>
+                            <div className="text-right text-green-500">
+                              +{token.bestPercentage.toFixed(2)}%
+                            </div>
+                            <div className="text-right">
+                              {ageInMinutes < 60
+                                ? `${ageInMinutes}m`
+                                : `${Math.floor(ageInMinutes / 60)}h ${
+                                    ageInMinutes % 60
+                                  }m`}
+                            </div>
+                            <div className="text-right">
+                              <Badge
+                                className={
+                                  isATH
+                                    ? "bg-green-500"
+                                    : token.percentageFromFlag > 0
+                                    ? "bg-yellow-500"
+                                    : "bg-red-500"
+                                }
+                              >
+                                {isATH
+                                  ? "ATH"
+                                  : token.bestPercentage > 50
+                                  ? "PROFIT"
+                                  : "LOSS"}
+                              </Badge>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </CardContent>
       </Card>
 
