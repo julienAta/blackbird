@@ -736,7 +736,8 @@ export function TokenScanner() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", "trades.csv");
+    const dateNow = new Date().toISOString().split("T")[0];
+    link.setAttribute("download", `trades_${dateNow}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -887,8 +888,8 @@ export function TokenScanner() {
                                 className={
                                   isATH
                                     ? "bg-green-500"
-                                    : token.percentageFromFlag > 0
-                                    ? "bg-yellow-500"
+                                    : token.bestPercentage > 50
+                                    ? "bg-green-500"
                                     : "bg-red-500"
                                 }
                               >
