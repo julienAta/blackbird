@@ -14,6 +14,7 @@ import { fetchSolPrice } from "@/app/actions/token";
 import { TokenMetrics } from "./types";
 import Papa from "papaparse";
 import { useToast } from "@/hooks/use-toast";
+import FlaggedTokensStats from "../results/results-stats";
 
 const BUFFER_INTERVAL = 500;
 const MAX_TOKENS = 10000;
@@ -823,6 +824,7 @@ export function TokenScanner() {
               <Card className="mt-4">
                 <CardHeader>
                   <CardTitle>Flagged Tokens Performance</CardTitle>
+                  <FlaggedTokensStats flaggedTokens={flaggedTokensMetrics} />
                 </CardHeader>
                 <CardContent>
                   <div className="grid gap-4">
